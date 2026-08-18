@@ -1,13 +1,27 @@
 const oracledb = require("oracledb");
-const { getConnection, getPools, ULog, ServiceError } = require("../../../../../lib/utils");
+const { getConnection, getPools, ULog } = require("../../../../../lib/utils");
 const system_cfg = require("../../../config/system_cfg");
-const { maskJson } = require("../../../util/LogMask");
 
 // Empty kk_config_scheme = the pool user owns the table; 'KKCONFIG' on test/prod.
 // Only this table is prefixed: AFC_TD, MST_BUS, PK_APP_VAL always live in the pool schema.
 function table() {
     const scheme = system_cfg.kk_config_scheme ? system_cfg.kk_config_scheme + "." : "";
     return scheme + "VALIDATOR_SERVICE_CONFIG";
+}
+
+const KKCONFIG_ALIAS = "kkconfig";
+
+/**
+ * The config table lives in one central place. A pool named 'kkconfig' is that place when it
+ * exists; otherwise the first Oracle pool is used, which is only correct while every pool can
+ * see the table.
+ */
+async function resolveConfigAlias() {
+    const oracle = (await getPools())?.oracle || {};
+    if (oracle[KKCONFIG_ALIAS]) return KKCONFIG_ALIAS;
+    const first = Object.keys(oracle)[0];
+    if (!first) throw new Error("no oracle pool available for the config table");
+    return first;
 }
 
 // Every row, for the boot-time / admin load. A row whose CONFIG is not valid JSON is logged
@@ -17,8 +31,7 @@ async function getAllConfig() {
     let dbConn;
     const result = [];
     try {
-        // Config table lives in one central place, so any configured Oracle pool can read it.
-        dbConn = await getConnection(Object.keys((await getPools()).oracle)[0]);
+        dbConn = await getConnection(await resolveConfigAlias());
         ULog.debug(sql);
         const rows = await dbConn.execute(sql, [], {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
@@ -37,33 +50,4 @@ async function getAllConfig() {
     return result;
 }
 
-// The per-request lookup: the system's own row plus 'app', so the caller can layer them the
-// way Java EnvConfig did (system value first, then app). Uses the request's pool connection.
-async function getConfigViaSystemId(conn, systemId, sessionId) {
-    const sql = `SELECT SYSTEM_ID, CONFIG FROM ${table()}`
-        + ` WHERE SYSTEM_ID = :systemid OR SYSTEM_ID = 'app' ORDER BY SYSTEM_ID`;
-    const binds = { systemid: systemId == null ? "" : String(systemId) };
-    ULog.debug(sql + " " + maskJson(binds), sessionId);
-
-    const rows = await conn.execute(sql, binds, {
-        outFormat: oracledb.OUT_FORMAT_OBJECT,
-        fetchInfo: { CONFIG: { type: oracledb.STRING } }
-    });
-    if (!rows.rows.length) throw new ServiceError(-99, `empty config for system_id='${systemId}'`);
-
-    let own = null, app = null;
-    for (const row of rows.rows) {
-        let parsed;
-        try {
-            parsed = JSON.parse(row.CONFIG || "{}");
-        } catch (parseError) {
-            ULog.error(`VALIDATOR_SERVICE_CONFIG parse error, SYSTEM_ID: ${row.SYSTEM_ID}, error: ${parseError?.message}`, sessionId);
-            continue;
-        }
-        if (row.SYSTEM_ID === "app") app = parsed;
-        else own = parsed;
-    }
-    return { CONFIG: own || app || {}, defaultCfg: { CONFIG: app || {} } };
-}
-
-module.exports = { getAllConfig, getConfigViaSystemId, table };
+module.exports = { getAllConfig, table, resolveConfigAlias };

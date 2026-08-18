@@ -1,9 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 const { ULog, ServiceError, xml2Json } = require("../../../lib/utils");
-const configDaoImpl = require("./dao/oracle/ConfigDaoImpl");
+const requestLogDaoImpl = require("./dao/oracle/ValidatorRequestLogDaoImpl");
 const pkAppValDaoImpl = require("./dao/oracle/PkAppValDaoImpl");
 const RequestStats = require("../util/RequestStats");
+const system_cfg = require("../config/system_cfg");
 const FileCacheManager = require("../util/FileCacheManager");
 
 const controller = {};
@@ -49,6 +50,45 @@ async function cacheKeyFor(req, func) {
 
     const fileName = FileCacheManager.buildFileName(func, q, offset);
     return fileName ? { fileName, offset } : null;
+}
+
+/**
+ * The system row layered over the shared 'app' row, straight from memory. Java read this out
+ * of EnvConfig the same way; the configWatch job keeps the copy current and ?func=reloadconfig
+ * refreshes it on demand, so a request never pays for a round trip to the config table.
+ */
+function configFor(systemId) {
+    const cfgs = system_cfg.cfgs || {};
+    const app = cfgs.app || {};
+    const own = cfgs[systemId];
+    const cfg = { ...(own || app) };
+    cfg.defaultCfg = app;
+    return cfg;
+}
+
+// Only these four functions have a kafka-only switch, and Java skipped the request log
+// whenever the switch was on: with no database write there is nothing to correlate a log with.
+const KAFKA_ONLY_FUNCS = new Set(["senddata", "sendcfg", "sendgps", "sendlog"]);
+
+function configValue(cfg, key) {
+    const own = cfg ? cfg[key] : undefined;
+    if (own !== undefined) return own;
+    return cfg?.defaultCfg ? cfg.defaultCfg[key] : undefined;
+}
+
+function isKafkaOnly(cfg, func) {
+    if (!KAFKA_ONLY_FUNCS.has(func)) return false;
+    const value = configValue(cfg, `${func}_use_only_kafka_produce`);
+    if (typeof value === "string") return value !== "" && value !== "0" && value.toLowerCase() !== "false";
+    return !!value;
+}
+
+/** The functions listed in save_request_log_functions keep a copy of every request body. */
+function savesRequestLog(cfg, func) {
+    const configured = configValue(cfg, "save_request_log_functions");
+    const list = Array.isArray(configured)
+        ? configured : String(configured ?? "").split(",");
+    return list.map((f) => String(f).trim().toLowerCase()).includes(func) && !isKafkaOnly(cfg, func);
 }
 
 /** Walks the compact xml-js tree and returns the code of the first ERROR element. */
@@ -126,9 +166,17 @@ module.exports = {
             if (!Object.prototype.hasOwnProperty.call(controller, func)) {
                 return next(new ServiceError(-9, "unrecognized func " + func));
             }
-            const config = await configDaoImpl.getConfigViaSystemId(req.dbConn, res.locals.systemId, req.sessionId);
-            req.cfg = config?.CONFIG;
-            if (req.cfg) req.cfg.defaultCfg = config?.defaultCfg?.CONFIG;
+            req.cfg = configFor(res.locals.systemId);
+
+            if (savesRequestLog(req.cfg, func)) {
+                await requestLogDaoImpl.insert(req.dbConn, {
+                    bus_id: req.query.busid ?? null,
+                    sam_id: req.query.samid ?? null,
+                    func_name: req.query.func ?? null,
+                    req_url: req.originalUrl,
+                    req_xml: req.rawBody == null ? null : String(req.rawBody),
+                }, req.sessionId);
+            }
 
             const key = await cacheKeyFor(req, func);
             if (!key) return await controller[func].func(req, res, next);
@@ -149,3 +197,4 @@ module.exports = {
 };
 
 module.exports.controller = controller;
+module.exports.configFor = configFor;

@@ -17,6 +17,10 @@ class PkAppValDaoImpl extends BaseDao {
     getMessageInfoSql = ' BEGIN pk_app_val.sp_get_message_info(:busid, :out_result); END; ';
     getValidatorListSql = ' BEGIN pk_app_val.sp_get_validator_list(:busid, :out_result); END; ';
     getBusRouteListSql = ' BEGIN pk_app_val.sp_get_bus_route_list(:busid, :routecode, :routecnt); END; ';
+    setDriverPasswordSql = ' BEGIN pk_app_val.sp_set_driver_password(:busid, :driverid, :pass, :retval); END; ';
+    setDeviceWlanStatusSql = ' BEGIN pk_app_val.sp_setdevice_wlan_status(:busid, :samid, :gprsip, :wlanip, :wlanstatus); END; ';
+    alarmTakeConfirmationSql = ' BEGIN pk_app_val.sp_alarm_take_confirmation(:alarmbutton, :message, :messageid); END; ';
+    alarmMessageLogSql = ' BEGIN pk_app_val.sp_alarm_message_log(:busid, :messageid, :message, :result); END; ';
     createRouteBusStopSql = ' BEGIN pk_app_val.sp_create_route_busstop(:version, :groupid, :samid, :out_result); END; ';
     createBusStopSql = ' BEGIN pk_app_val.sp_create_busstop(:version, :samid, :out_result); END; ';
     getRouteSql = ' BEGIN pk_app_val.sp_get_route(:version, :busid, :opdate, :out_result); END; ';
@@ -87,6 +91,31 @@ class PkAppValDaoImpl extends BaseDao {
         this.ULog.debug(this.getBusRouteListSql + " " + this.maskJson(data), sessionId);
         const result = await conn.execute(this.getBusRouteListSql, data);
         return result.outBinds.routecnt;
+    }
+
+    /** The procedure reports its own failure in an OUT code; a non-zero value is the error. */
+    async setDriverPassword(conn, data, sessionId) {
+        data.retval = { dir: this.oracledb.BIND_OUT, type: this.oracledb.NUMBER };
+        this.ULog.debug(this.setDriverPasswordSql + " " + this.maskJson(data), sessionId);
+        const result = await conn.execute(this.setDriverPasswordSql, data);
+        return result.outBinds.retval;
+    }
+
+    setDeviceWlanStatus(conn, data, sessionId) {
+        return this.exec(conn, this.setDeviceWlanStatusSql, data, sessionId);
+    }
+
+    /** Returns the message to display on the bus and its id; id 0 means there is nothing to send. */
+    async alarmTakeConfirmation(conn, data, sessionId) {
+        data.message = { dir: this.oracledb.BIND_OUT, type: this.oracledb.STRING };
+        data.messageid = { dir: this.oracledb.BIND_OUT, type: this.oracledb.NUMBER };
+        this.ULog.debug(this.alarmTakeConfirmationSql + " " + this.maskJson(data), sessionId);
+        const result = await conn.execute(this.alarmTakeConfirmationSql, data);
+        return { message: result.outBinds.message, messageId: result.outBinds.messageid };
+    }
+
+    alarmMessageLog(conn, data, sessionId) {
+        return this.exec(conn, this.alarmMessageLogSql, data, sessionId);
     }
 
     async getSystemPdate(conn, data, sessionId) {

@@ -14,7 +14,7 @@ const ErrorCodes = {
     CANNOT_FETCH_DATA: { code: -97, message: 'cannot fetch data from db' },
     GENERIC_ERROR: { code: -99, message: 'error' },
     NOT_MODIFIED: { code: -304, message: 'Not Modified' },
-    ANOTHER_BUS_HAS_OPEN_SESSION: { code: -2001, message: 'another bus has open session' },
+    ANOTHER_BUS_HAS_OPEN_SESSION: { code: -2001, message: 'Another bus has an open session with this driver. Please close it before proceeding.' },
     DOWNLOAD_FAILED: { code: -20094, message: 'Download Failed' },
     FILE_NOT_READY: { code: -20095, message: 'File Not Ready' },
     FILE_NOT_FOUND: { code: -20096, message: 'File Not found' },

@@ -12,7 +12,8 @@ const posix = (f) => f.split(path.sep).join('/');
 
 function walk(dir, out = []) {
     for (const entry of fs.readdirSync(dir)) {
-        if (entry === 'node_modules' || entry.startsWith('.')) continue;
+        // test-report holds the generated mochawesome bundle, which is not our source.
+        if (entry === 'node_modules' || entry === 'test-report' || entry.startsWith('.')) continue;
         const abs = path.join(dir, entry);
         if (fs.statSync(abs).isDirectory()) walk(abs, out);
         else out.push(abs);

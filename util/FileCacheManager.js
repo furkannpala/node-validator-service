@@ -124,6 +124,42 @@ function cleanDirectory() {
     }
 }
 
+/**
+ * Deletes cached files that are older than maxAgeMs and reports how many went. This is what
+ * the cacheCleanup job runs; ?func=cleancachefiles still empties the whole tree at once.
+ */
+function removeExpired(maxAgeMs) {
+    const cutoff = Date.now() - maxAgeMs;
+    let removed = 0;
+    for (const dir of directories()) {
+        for (const entry of safeList(dir)) {
+            const target = path.join(dir, entry);
+            try {
+                if (!fs.statSync(target).isFile() || fs.statSync(target).mtimeMs > cutoff) continue;
+                fs.rmSync(target, { force: true });
+                removed++;
+            } catch (e) {
+                ULog.error(`cache removeExpired failed for ${target}: ${e?.message}`);
+            }
+        }
+    }
+    return removed;
+}
+
+/** The base directory plus one directory per cached operation. */
+function directories() {
+    return [baseDir(), ...Object.values(OPERATIONS).map((op) => path.join(baseDir(), op.directory))];
+}
+
+function safeList(dir) {
+    try {
+        return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    } catch (e) {
+        ULog.error(`cache list failed for ${dir}: ${e?.message}`);
+        return [];
+    }
+}
+
 /** Also performs the day rollover: a cached file must never outlive its operation day. */
 function exists(fileName, func, offsetMinutes) {
     const now = Date.now();
@@ -177,9 +213,8 @@ function getInfo() {
 }
 
 module.exports = {
-    DIRECTORY_NAME, OPERATIONS,
     isOperationDefined, buildFileName, isSameDate,
-    exists, read, store, filePath, directoryOf,
-    isDownloadStarted, startDownload, clearDownload,
-    getOffset, setOffset, getInfo, cleanDirectory, createDirectory,
+    exists, read, store, filePath,
+    isDownloadStarted, startDownload, clearDownload, cleanDirectory, removeExpired,
+    getOffset, setOffset, getInfo,
 };

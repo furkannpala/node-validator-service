@@ -1,11 +1,37 @@
 const oracledb = require("oracledb");
 const { ULog } = require("../../../../lib/utils");
 const { maskJson } = require("../../util/LogMask");
+const { TX } = require("./daoUtil");
+const Constant = require("../../constant/Constant");
 
 class BaseDao {
     ULog = ULog;
     oracledb = oracledb;
     maskJson = maskJson;
+
+    /**
+     * Every write statement in the service has the same shape. autoCommit stays off so the
+     * commit boundary is the controller's, one record at a time.
+     */
+    async exec(conn, sql, binds, sessionId) {
+        ULog.debug(sql + " " + maskJson(binds), sessionId);
+        const result = await conn.execute(sql, binds, TX);
+        return result.rowsAffected || 0;
+    }
+
+    /**
+     * The AFC_TD family of DAOs swallowed a duplicate key in Java and reported false, so the
+     * rest of the record still went in. Anything else is the caller's problem.
+     */
+    async execIgnoreDuplicate(conn, sql, binds, sessionId) {
+        try {
+            return await this.exec(conn, sql, binds, sessionId) === 1;
+        } catch (e) {
+            if (e?.errorNum !== Constant.SQL_EXCEPTION_UNIQUE_INDEX) throw e;
+            ULog.debug(`duplicate ignored: ${e.message}`, sessionId);
+            return false;
+        }
+    }
 
     /**
      * The shape almost every read-only endpoint has in Java: N string IN params plus one OUT

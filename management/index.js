@@ -1,6 +1,8 @@
 const { ULog, ServiceError } = require("../../../lib/utils");
 const system_cfg = require("../config/system_cfg");
 const configDaoImpl = require("../validator/dao/oracle/ConfigDaoImpl");
+const JobManager = require("../jobs/JobManager");
+const { JOBS } = require("../jobs");
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 const SECRET_KEY = /pass|secret|token|pwd|credential|apikey|api_key/i;
@@ -15,8 +17,8 @@ const controller = {
         };
     },
 
-    // Reads the config table straight through and refreshes the in-memory copy. Until the
-    // configWatch job lands (phase 7.1) this is the only path that populates system_cfg.cfgs.
+    // Reads the config table straight through and refreshes the in-memory copy. The
+    // configWatch job does the same on a timer; this is the by-hand path.
     getconfig: async (req, res) => {
         const rows = await configDaoImpl.getAllConfig();
         const cfgs = {};
@@ -41,6 +43,40 @@ const controller = {
             kk_config_scheme: system_cfg.kk_config_scheme,
             cfgs: systemId ? { [systemId]: masked[systemId] } : masked,
         };
+    },
+    /**
+     * Every job the manager knows about, registered or not. A job that is off by default shows
+     * up as registered:false so the list explains its own absence from the console.
+     */
+    getjobs: async (req, res) => {
+        const handles = JobManager.handles || [];
+        const byName = new Map(handles.map((h) => [h.name, h]));
+
+        res.setHeader("Content-Type", JSON_CONTENT_TYPE);
+        res.locals.data = {
+            started: JobManager.started,
+            jobs: JOBS.map((job) => {
+                const handle = byName.get(job.name);
+                if (!handle) return { name: job.name, registered: false };
+                return {
+                    name: job.name,
+                    registered: true,
+                    rateMs: handle.rateMs,
+                    running: handle.running,
+                    lastRunAt: handle.lastRunAt,
+                    lastDurationMs: handle.lastDurationMs,
+                    lastError: handle.lastError,
+                    nextRunAt: handle.nextRunAt,
+                };
+            }),
+        };
+    },
+
+    /** Re-reads KKCONFIG and rebinds the jobs, so a changed period takes effect at once. */
+    reloadconfig: async (req, res) => {
+        const changed = await JobManager.reloadConfig();
+        res.setHeader("Content-Type", JSON_CONTENT_TYPE);
+        res.locals.data = { changed, systems: Object.keys(system_cfg.cfgs) };
     },
 };
 

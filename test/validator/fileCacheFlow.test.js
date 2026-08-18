@@ -1,3 +1,4 @@
+/* eslint-env mocha */
 const assert = require('assert');
 const fs = require('fs');
 const moment = require('moment');
