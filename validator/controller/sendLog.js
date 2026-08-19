@@ -11,18 +11,26 @@ class SendLog extends ValidatorControllerBase {
     async func(req, res, next) {
         let respErr;
         try {
-            if (this.cfgBool(req, "sendlog_use_only_kafka_produce", false)) {
-                this.okResponse(res);
-                return;
+            const dbEnabled = !this.kafkaOnly(req, "sendlog");
+            const toKafka = this.kafkaEnabled(req, "sendlog");
+            // Java skipped the status call, and the connection with it, on the kafka-only path.
+            if (dbEnabled) {
+                await this.setValidatorStatus(req, " SendLog ",
+                    ` Stationtype :${req.query.stationtype} arch :${req.query.arch}`);
             }
-            await this.setValidatorStatus(req, " SendLog ",
-                ` Stationtype :${req.query.stationtype} arch :${req.query.arch}`);
 
             // The bus id comes from the query string, not the body; LOG carries the host and
             // source, each DATA one entry. Java kept them in the same variables, so do we.
             const trx = new LogTransaction(req.query.busid ?? null);
             for (const element of this.bodyElements(req)) {
                 trx.applyAttrs(element.name, element.attrs);
+                // The produce runs before the scope guard: Java sent a message for every
+                // element in the body, including the LOG one that carries no entry.
+                if (toKafka) {
+                    await this.produceKafka(req, "sendlog", trx.toKafkaPayload(), trx.bus_id,
+                        "Kafka Error: ");
+                }
+                if (!dbEnabled) continue;
                 // Java's only guard, and it applied to every element, not just DATA.
                 if (trx.scope == null) continue;
                 await this.storeOne(req, trx);

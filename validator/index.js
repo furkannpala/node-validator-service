@@ -167,6 +167,8 @@ module.exports = {
                 return next(new ServiceError(-9, "unrecognized func " + func));
             }
             req.cfg = configFor(res.locals.systemId);
+            // Java carried the id on SystemConfig; the kafka producer cache is keyed by it.
+            req.systemId = res.locals.systemId;
 
             if (savesRequestLog(req.cfg, func)) {
                 await requestLogDaoImpl.insert(req.dbConn, {

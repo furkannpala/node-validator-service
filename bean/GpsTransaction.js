@@ -1,4 +1,5 @@
 const StringUtil = require('../util/StringUtil');
+const { gson } = require('../util/Gson');
 
 const FIELDS = [
     'bus_id', 'date_time', 'latitude', 'nsindicator', 'longitude', 'ewindicator', 'altitude',
@@ -87,6 +88,49 @@ class GpsTransaction {
     getRouteDistanceInt() { return StringUtil.tryParseInt(this.route_distance, 0); }
     getRouteOffsetInt() { return StringUtil.tryParseInt(this.route_offset, 0); }
     getOdometerInt() { return StringUtil.tryParseInt(this.odometer, 0); }
+
+    /**
+     * The GPSDAT message, in the field order of Java's GpsTransaction. param_id and param_value
+     * belong to the CANDAT half and are never set on this path, so they stay out.
+     */
+    toKafkaGpsPayload() {
+        return gson({
+            dataType: 'GPSDAT',
+            bus_id: this.bus_id, date_time: this.date_time, latitude: this.latitude,
+            nsindicator: this.nsindicator, longitude: this.longitude,
+            ewindicator: this.ewindicator, altitude: this.altitude, speed: this.speed,
+            utctime: this.utctime, hdop: this.hdop, svcount: this.svcount, status: this.status,
+            route_distance: this.route_distance, route_code: this.route_code, hpt: this.hpt,
+            route_offset: this.route_offset, odometer: this.odometer,
+            main_event: this.main_event, sub_event: this.sub_event,
+            driver_code: this.driver_code, trip_no: this.trip_no, path_code: this.path_code,
+            total_fuel_used: this.total_fuel_used, sam_id: this.sam_id,
+            travel_seq_no: this.travel_seq_no, start_date_time: this.start_date_time,
+            bus_stop_id: this.bus_stop_id, stop_seq_no: this.stop_seq_no,
+            apc_1_in_cnt: this.apc_1_in_cnt, apc_2_in_cnt: this.apc_2_in_cnt,
+            apc_3_in_cnt: this.apc_3_in_cnt, apc_4_in_cnt: this.apc_4_in_cnt,
+            apc_5_in_cnt: this.apc_5_in_cnt, apc_1_out_cnt: this.apc_1_out_cnt,
+            apc_2_out_cnt: this.apc_2_out_cnt, apc_3_out_cnt: this.apc_3_out_cnt,
+            apc_4_out_cnt: this.apc_4_out_cnt, apc_5_out_cnt: this.apc_5_out_cnt,
+        });
+    }
+
+    /**
+     * The CANDAT message. Java reused the one GpsTransaction it built for the whole body and
+     * overwrote only these six fields, so whatever the last GPSDAT element left behind rides
+     * along in the document. Calling this on the same instance keeps that.
+     */
+    toKafkaCanPayload(can) {
+        const payload = this.toKafkaGpsPayload();
+        payload.dataType = 'CANDAT';
+        payload.bus_id = can.bus_id;
+        payload.date_time = can.date_time;
+        payload.latitude = can.lat;
+        payload.longitude = can.lng;
+        payload.param_id = can.param_id;
+        payload.param_value = can.param_value;
+        return gson(payload);
+    }
 
     /** TMS_APC and friends store 19700101000000 rather than an empty or zero start time. */
     getRStartDateTime() {

@@ -1,6 +1,8 @@
 const StringUtil = require("../util/StringUtil");
 const EccDsaVerify = require("../util/EccDsaVerify");
 const daoFactory = require("../validator/daoFactory/DaoFactory");
+const Constant = require("../constant/Constant");
+const { ErrorManagement, ErrorCodes } = require("../constant/ErrorManagement");
 
 // Only this system signs its ticket records; everywhere else they are trusted as sent.
 const SIGNED_SYSTEM = '112';
@@ -30,6 +32,10 @@ class DRecordStrategy {
         this.mstBus = daoFactory.get("MstBusDaoImpl");
         this.afcTdEmv = daoFactory.get("AfcTdEmvDaoImpl");
         this.tblRfcard = daoFactory.get("TblRfcardDaoImpl");
+        this.pkConfig = daoFactory.get("PkConfigDaoImpl");
+        this.Constant = Constant;
+        this.ErrorManagement = ErrorManagement;
+        this.ErrorCodes = ErrorCodes;
     }
 
     async processTransaction(conn, trx, cfg, sessionId) {
@@ -50,14 +56,54 @@ class DRecordStrategy {
         trx.transfer_ref_code = this.transferRefCode(trx, cfg);
 
         if (!verified) {
-            return this.afcTdNonverified.insert(conn, trx, {}, sessionId);
+            await this.afcTdNonverified.insert(conn, trx, {}, sessionId);
+        } else {
+            // only_tap records are counted but never stored as a ticket. The CSN still goes
+            // back, because Java kept that write outside the only_tap guard.
+            if (String(trx.only_tap) !== '1') {
+                await this.afcTd.insert(conn, trx, this.options(trx, cfg, true), sessionId);
+            }
+            await this.storeCsn(conn, trx, sessionId);
         }
-        // only_tap records are counted but never stored as a ticket. The CSN still goes back,
-        // because Java kept that write outside the only_tap guard.
-        if (String(trx.only_tap) !== '1') {
-            await this.afcTd.insert(conn, trx, this.options(trx, cfg, true), sessionId);
+        // Java gathered the usage after both branches, so an unverified ticket is sent too.
+        return await this.collectEmvUsage(conn, trx, cfg, sessionId);
+    }
+
+    /**
+     * A credit card ticket is also reported to the payment gateway, in one batch per body.
+     * key_index 1 means the device priced the ride itself, so only the rest are reported —
+     * unless the service is running as a test system, where every one of them is.
+     */
+    async collectEmvUsage(conn, trx, cfg, sessionId) {
+        if (!cfg.emvUsages) return 0;
+        const type = String(trx.card_no ?? '').substring(5, 7);
+        if (!(cfg.creditCardTypes || []).includes(type)) return 0;
+
+        const keyIndex = String(trx.key_index ?? '');
+        const isTestEnvironment = String(cfg.serverEnvironment).toLowerCase() === this.Constant.TEST;
+        if (!isTestEnvironment && (keyIndex.toLowerCase() === '1' || keyIndex === '')) return 0;
+
+        if (StringUtil.isNullOrEmpty(trx.ptcn)) {
+            this.ErrorManagement.throw(this.ErrorCodes.EMV_TAG_MISSING,
+                `${trx.card_no} ,boarding_date_time=${trx.boarding_date_time}`);
         }
-        return await this.storeCsn(conn, trx, sessionId);
+        // The raw attribute plus the parsed service charge; neither is divided by the multiplier.
+        const totalUsageAmt = StringUtil.parseIntStrict(trx.usage_amt) + trx.service_charge;
+        cfg.emvUsages.add({
+            alias_no: trx.alias_no, card_no: trx.card_no, usage_amt: totalUsageAmt,
+            sam_id: trx.sam_id, pdate: await this.pkConfig.getOperationPdate(conn, sessionId),
+            boarding_date_time: trx.boarding_date_time, usage_cnt: trx.usage_cnt, ptcn: trx.ptcn,
+            enc_pan: trx.enc_pan, masked_pan: trx.masked_pan, bin: trx.bin,
+            late_auth: trx.late_auth, expired_date: trx.expired_date, amount: trx.emv_amount,
+            pan_sequence: trx.pan_sequence, key_type: trx.key_type, key_index: trx.key_index,
+            emv: trx.emv, on_us: trx.on_us,
+            // The gateway's term_no is the bus, not the EMV terminal number the card sent.
+            term_no: trx.bus_id, system_id: cfg.systemId, trans_result: trx.trans_result,
+            trans_flag: trx.trans_flag, rtc_code: trx.rtc_code, ci_tid: trx.ci_tid,
+            ci_bdt: trx.ci_bdt, fare_file_version: trx.fare_file_version,
+            travel_type: trx.travel_type, stop_name: trx.stop_name,
+        });
+        return 0;
     }
 
     /** The EMV child of the record, if the device sent one; the ptcn is what marks it present. */

@@ -38,6 +38,9 @@ describe('senddata', () => {
         const err = await run(sendData, request(c), makeRes());
 
         assert.ok(err, 'expected an error');
+        // Java process() put everything the body raised behind the same code and prefix.
+        assert.strictEqual(err.code, 103);
+        assert.ok(err.message.startsWith('Database operation failed: '), err.message);
         assert.ok(err.message.includes(
             'mst_bus validation failed: BUS_ID: 34AA0001, STATION_TYPE: 1 (no record found)'), err.message);
         assert.strictEqual(c.matching('INSERT INTO afc_td(').length, 0);
@@ -172,5 +175,40 @@ describe('senddata', () => {
         });
         await run(sendData, makeReq(c, { busid: '34AA0001', stationtype: '1' }, body()), makeRes('106'));
         assert.strictEqual(c.matching('INSERT INTO afc_td(').length, 1);
+    });
+
+    describe('per-element reset', () => {
+        /**
+         * Java cleared part of its state at the top of every DATA element. Without that, a
+         * value the first element sent is written again for the second one, silently.
+         */
+        // The first element carries the extras, the second one only the base attributes.
+        const BASE = DATA_ATTRS.replace(' product_code="P1"', '');
+        const twoElements = (extras) => `<TD><DATA ${BASE} ${extras}/><DATA ${BASE}/></TD>`;
+
+        it('clears the fields Java cleared and keeps the ones it did not', async () => {
+            const c = conn();
+            const body = twoElements('qr_data="QR1" product_code="P9"');
+            await run(sendData, makeReq(c, { busid: '34AA0001', stationtype: '1' }, body), makeRes());
+
+            const rows = c.matching('INSERT INTO afc_td(');
+            assert.strictEqual(rows.length, 2);
+            assert.strictEqual(rows[0].binds.qr_data, 'QR1');
+            // qr_data is on the reset list, so the second statement has no QR_DATA column.
+            assert.ok(!rows[1].sql.includes('QR_DATA'), rows[1].sql);
+            assert.strictEqual(rows[1].binds.product_code, null, 'product_code is on it too');
+            // card_no is not, so the second row still carries the first one's value.
+            assert.strictEqual(rows[1].binds.card_no, rows[0].binds.card_no);
+        });
+
+        it('leaves product_code alone on the station path, as ins_station did', async () => {
+            const c = conn();
+            await run(sendData, makeReq(c, { busid: 'ST01', stationtype: '2' },
+                twoElements('product_code="P9"')), makeRes());
+
+            const rows = c.matching('INSERT INTO afc_td(');
+            assert.strictEqual(rows.length, 2);
+            assert.strictEqual(rows[1].binds.product_code, 'P9');
+        });
     });
 });

@@ -6,6 +6,7 @@ const { ErrorManagement, ErrorCodes } = require("../constant/ErrorManagement");
 const Constant = require("../constant/Constant");
 const XmlWalk = require("../util/XmlWalk");
 const HttpUtil = require("../util/HttpUtil");
+const KafkaProducer = require("../util/KafkaProducer");
 
 class ValidatorControllerBase {
     constructor() {
@@ -78,6 +79,44 @@ class ValidatorControllerBase {
         const v = this.cfg(req, key, defaultValue);
         if (typeof v === "string") return v !== "" && v !== "0" && v.toLowerCase() !== "false";
         return !!v;
+    }
+
+    /** senddata, sendcfg, sendgps and sendlog each have their own producer switch. */
+    kafkaEnabled(req, func) {
+        return this.cfgBool(req, `${func}_use_kafka_producer`, false);
+    }
+
+    /** With this on, the record only goes to Kafka and every database write is skipped. */
+    kafkaOnly(req, func) {
+        return this.cfgBool(req, `${func}_use_only_kafka_produce`, false);
+    }
+
+    /**
+     * The six Java produce blocks share one shape: send the message, log a failure, and let it
+     * take the request down only when <func>_kafka_error_throw is on. errorPrefix is the literal
+     * that call site used — two of them spell it "Kakfka Error:" and the spacing varies.
+     */
+    async produceKafka(req, func, payload, recordKey, errorPrefix) {
+        try {
+            await KafkaProducer.produce(payload, {
+                systemId: req.systemId ?? req.query.systemid,
+                sessionId: req.sessionId,
+                retries: this.cfg(req, "kafka_producer_retries", KafkaProducer.DEFAULT_RETRIES),
+                maxBlockMs: this.cfg(req, "kafka_producer_max_block_ms",
+                    KafkaProducer.DEFAULT_MAX_BLOCK_MS),
+            }, this.cfg(req, `${func}_topic`, null), recordKey, this.bootstrapServers(req, func));
+        } catch (error) {
+            this.ULog.error(`Kafka producer error: ${error?.message}`, req.sessionId);
+            if (!this.cfgBool(req, `${func}_kafka_error_throw`, false)) return;
+            throw new ServiceError(this.ErrorCodes.KAFKA_ERROR.code, errorPrefix + error?.message);
+        }
+    }
+
+    /** A per-function broker list wins; an empty one falls back to the shared list, as in Java. */
+    bootstrapServers(req, func) {
+        const own = this.cfg(req, `kk_bootstrap_servers_${func}`, "");
+        const list = KafkaProducer.brokerList(own);
+        return list.length ? own : this.cfg(req, "kk_bootstrap_servers", "");
     }
 
     /**

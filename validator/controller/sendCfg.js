@@ -12,13 +12,13 @@ class SendCfg extends ValidatorControllerBase {
     async func(req, res, next) {
         let respErr;
         try {
+            const dbEnabled = !this.kafkaOnly(req, "sendcfg");
+            const toKafka = this.kafkaEnabled(req, "sendcfg");
             // Java skipped the status call and the connection entirely on the kafka-only path.
-            if (this.cfgBool(req, "sendcfg_use_only_kafka_produce", false)) {
-                this.okResponse(res);
-                return;
+            if (dbEnabled) {
+                await this.setValidatorStatus(req, " SendCfg ",
+                    ` Stationtype :${req.query.stationtype} arch :${req.query.arch}`);
             }
-            await this.setValidatorStatus(req, " SendCfg ",
-                ` Stationtype :${req.query.stationtype} arch :${req.query.arch}`);
 
             // One bean for the whole body: ins_cfg never cleared its variables, so an element
             // that omits an attribute keeps the value the previous element supplied.
@@ -26,6 +26,11 @@ class SendCfg extends ValidatorControllerBase {
             for (const element of this.bodyElements(req)) {
                 trx.applyAttrs(element.attrs);
                 if (trx.bus_id == null) continue;
+                if (toKafka) {
+                    await this.produceKafka(req, "sendcfg", trx.toKafkaPayload(), trx.sam_id,
+                        "Kakfka Error:");   // Java's spelling at this call site
+                }
+                if (!dbEnabled) continue;
                 await this.storeOne(req, trx);
             }
             this.okResponse(res);

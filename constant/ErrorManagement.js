@@ -6,6 +6,7 @@ const ErrorCodes = {
     XML_PARSE_PROBLEM: { code: -1, message: 'Rfcard xml has a problem:' },
     TICKET_ID_NOT_SPECIFIED: { code: -1, message: 'ticket id is not specified' },
     FUNC_NOT_SPECIFIED: { code: -3, message: 'func is not specified' },
+    TICKET_ENGINE_ERROR: { code: -3, message: 'Ticket Engine Error: ' },
     UNRECOGNIZED_FUNC: { code: -9, message: 'unrecognized func ' },
     DRIVER_NOT_FOUND: { code: -55, message: 'Driver not found. Please check the driver ID.' },
     PIN_MISMATCH: { code: -56, message: 'PIN does not match. Please check the provided credentials.' },

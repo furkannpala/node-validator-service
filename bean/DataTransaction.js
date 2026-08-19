@@ -1,4 +1,5 @@
 const StringUtil = require('../util/StringUtil');
+const { gson } = require('../util/Gson');
 
 /**
  * The DATA element of a senddata body. Java read it with three different comparison styles in
@@ -102,6 +103,27 @@ const EMV_DEFAULTS = {
     currency_code: '', trans_result: '', ci_tid: '', ci_bdt: '', stop_name: '',
 };
 
+/**
+ * Java cleared exactly these at the top of every DATA element and left everything else alone,
+ * so a value the previous element supplied still leaks into this one. term_no and currency_code
+ * are missing from the list in the Java source; that is a bug there and it is reproduced here.
+ * ins_station clears the same set except product_code.
+ */
+const PER_ELEMENT_RESET = {
+    ptcn: '', enc_pan: '', masked_pan: '', bin: '', late_auth: '', expired_date: '',
+    emv_amount: '', pan_sequence: '', key_type: '', key_index: '', emv: '', on_us: '',
+    extended_fare: '0', trans_result: '',
+    qr_data: null, tap_id: null, only_tap: null, cico_mode: null,
+    service_charge: 0, service_charge_str: null, fare_file_version: null, travel_type: null,
+};
+
+// The EmvTransaction bean Java nested inside the message, in its declaration order.
+const EMV_JSON_FIELDS = [
+    'term_no', 'ptcn', 'enc_pan', 'masked_pan', 'bin', 'late_auth', 'expired_date',
+    'emv_amount', 'pan_sequence', 'key_type', 'key_index', 'emv', 'on_us', 'currency_code',
+    'trans_result',
+];
+
 const FIELDS = [...new Set([
     ...Object.values(DATA_EXACT), ...Object.values(DATA_CI), ...Object.values(EMV_CI),
     ...Object.values(STATION_EXACT), ...Object.values(STATION_CI),
@@ -129,6 +151,19 @@ class DataTransaction {
         this.originSystemId = null;
         this.transfer_ref_code = null;
         this.pathCode = null;
+        // Java nulled its local emvTransaction per element and only rebuilt it when the DATA
+        // element carried an EMV child; the message shape depends on which of the two happened.
+        this.hasEmv = false;
+    }
+
+    /**
+     * The start of one DATA element. Without this a value the previous element sent survives
+     * into the next one for every field Java did clear, which is most of the newer ones.
+     */
+    resetPerElement(isStation) {
+        Object.assign(this, PER_ELEMENT_RESET);
+        if (!isStation) this.product_code = null;
+        this.hasEmv = false;
     }
 
     /**
@@ -161,10 +196,108 @@ class DataTransaction {
     }
 
     applyEmvAttrs(attrs) {
+        this.hasEmv = true;
         for (const [name, value] of Object.entries(attrs || {})) {
             const field = EMV_CI[name.toLowerCase()];
             if (field) this[field] = value;
         }
+    }
+
+    /**
+     * The senddata message, in the shape and field order of Java's DataTransaction. The bus and
+     * station call sites fill different subsets — the station one never sends a position, a
+     * path code or fuel figures — so an unset field is absent rather than null here too.
+     */
+    toKafkaPayload(isStation) {
+        return isStation ? this.toKafkaStationPayload() : this.toKafkaBusPayload();
+    }
+
+    toKafkaBusPayload() {
+        return gson({
+            type: 'T',
+            record_id: this.record_id, travel_seq_no: this.travel_seq_no,
+            trans_seq_no: this.trans_seq_no, sam_id: this.sam_id,
+            validator_id: this.validator_id, bus_id: this.bus_id, depot_code: this.depot_code,
+            route_code: this.route_code, driver_code: this.driver_code,
+            boarding_date_time: this.boarding_date_time, start_date_time: this.start_date_time,
+            half_progress_type: this.half_progress_type, return_flag: this.return_flag,
+            emergency_flag: this.emergency_flag, alias_no: this.alias_no, card_no: this.card_no,
+            trans_flag: this.trans_flag, data_save_flag: this.data_save_flag,
+            station_type: this.station_type, customer_flag: this.customer_flag,
+            bus_stop_id: this.bus_stop_id, transmit_cnt: this.transmit_cnt,
+            usage_cnt: this.usage_cnt, passenger_type: this.passenger_type,
+            usage_amt: this.usage_amt, remained_amt: this.remained_amt,
+            customer_cnt: this.customer_cnt, traffic_type: this.traffic_type,
+            schedule_type: this.schedule_type, old_route_code: this.old_route_code,
+            dc_rate: this.dc_rate, tc_code: this.tc_code, approval_no: this.approval_no,
+            rtc_code: this.rtc_code, old_amt: this.old_amt, old_date_time: this.old_date_time,
+            old_sam_id: this.old_sam_id,
+            // Java assigned the same merged value to both spellings before sending.
+            latitude: this.latitude, longitude: this.longitude,
+            LATITUDE: this.latitude, LONGITUDE: this.longitude,
+            sam_seq_no: this.sam_seq_no, qtick_used: this.qtick_used, trip_no: this.trip_no,
+            origin_sam_id: this.origin_sam_id, trip_stop_cnt: this.trip_stop_cnt,
+            odometer: this.odometer, trip_type: this.trip_type, stage: this.stage,
+            path_code: this.path_code, manual_trip_start_time: this.manual_trip_start_time,
+            stop_seq_no: this.stopSeqNoString(), total_fuel_used: this.total_fuel_used,
+            rider: this.rider, tariff_number: this.tariff_number,
+            emvTransaction: this.toEmvPayload(),
+            extended_fare: this.extended_fare, qr_data: this.qr_data, only_tap: this.only_tap,
+            tap_id: this.tap_id, uid: this.uid, cico_mode: this.cico_mode,
+            service_charge: this.service_charge_str, vehicle_type: this.vehicle_type,
+            ci_tid: this.ci_tid, ci_bdt: this.ci_bdt,
+            // A Java primitive, so it is in the document even though nothing ever sets it.
+            offline_success_tap: false,
+            fare_file_version: this.fare_file_version, travel_type: this.travel_type,
+            product_code: this.product_code,
+        });
+    }
+
+    toKafkaStationPayload() {
+        return gson({
+            type: 'T',
+            record_id: this.record_id, travel_seq_no: this.travel_seq_no,
+            trans_seq_no: this.trans_seq_no, sam_id: this.sam_id,
+            validator_id: this.validator_id, bus_id: this.bus_id, depot_code: this.depot_code,
+            route_code: this.route_code, driver_code: this.driver_code,
+            boarding_date_time: this.boarding_date_time, start_date_time: this.start_date_time,
+            // The station path reads half_progress_type into hpt; see STATION_CI.
+            half_progress_type: this.hpt, return_flag: this.return_flag,
+            emergency_flag: this.emergency_flag, alias_no: this.alias_no, card_no: this.card_no,
+            trans_flag: this.trans_flag, data_save_flag: this.data_save_flag,
+            station_type: this.station_type, customer_flag: this.customer_flag,
+            bus_stop_id: this.bus_stop_id, transmit_cnt: this.transmit_cnt,
+            usage_cnt: this.usage_cnt, passenger_type: this.passenger_type,
+            usage_amt: this.usage_amt, remained_amt: this.remained_amt,
+            customer_cnt: this.customer_cnt, traffic_type: this.traffic_type,
+            old_route_code: this.old_route_code, dc_rate: this.dc_rate, tc_code: this.tc_code,
+            approval_no: this.approval_no, rtc_code: this.rtc_code, old_amt: this.old_amt,
+            old_date_time: this.old_date_time, old_sam_id: this.old_sam_id,
+            sam_seq_no: this.sam_seq_no, qtick_used: this.qtick_used, trip_no: this.trip_no,
+            origin_sam_id: this.origin_sam_id, odometer: this.odometer,
+            stop_seq_no: this.stopSeqNoString(), rider: this.rider,
+            tariff_number: this.tariff_number,
+            emvTransaction: this.toEmvPayload(),
+            extended_fare: this.extended_fare, qr_data: this.qr_data, only_tap: this.only_tap,
+            tap_id: this.tap_id, uid: this.uid, cico_mode: this.cico_mode,
+            service_charge: this.service_charge_str, vehicle_type: this.vehicle_type,
+            offline_success_tap: false,
+            fare_file_version: this.fare_file_version, travel_type: this.travel_type,
+            product_code: this.product_code,
+        });
+    }
+
+    /** The field is a Java object that is never null, so an element with no EMV child sends {}. */
+    toEmvPayload() {
+        if (!this.hasEmv) return {};
+        const emv = {};
+        for (const field of EMV_JSON_FIELDS) emv[field] = this[field];
+        return gson(emv);
+    }
+
+    /** Java held this one as an int and called Integer.toString() on the way into the message. */
+    stopSeqNoString() {
+        return this.stop_seq_no == null ? null : String(this.stop_seq_no);
     }
 
     /** The string goes to the row, the parsed copy to the amount; Java swallowed a bad parse. */
@@ -187,4 +320,5 @@ DataTransaction.DATA_CI = DATA_CI;
 DataTransaction.EMV_CI = EMV_CI;
 DataTransaction.STATION_EXACT = STATION_EXACT;
 DataTransaction.STATION_CI = STATION_CI;
+DataTransaction.PER_ELEMENT_RESET = PER_ELEMENT_RESET;
 module.exports = DataTransaction;

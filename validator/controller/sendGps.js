@@ -33,24 +33,31 @@ class SendGps extends ValidatorControllerBase {
     async func(req, res, next) {
         let respErr;
         try {
-            if (this.cfgBool(req, "sendgps_use_only_kafka_produce", false)) {
-                this.okResponse(res);
-                return;
+            const dbEnabled = !this.kafkaOnly(req, "sendgps");
+            const toKafka = this.kafkaEnabled(req, "sendgps");
+            if (dbEnabled) {
+                await this.setValidatorStatus(req, " SendGPS ",
+                    ` Stationtype :${req.query.stationtype} arch :${req.query.arch}`);
             }
-            await this.setValidatorStatus(req, " SendGPS ",
-                ` Stationtype :${req.query.stationtype} arch :${req.query.arch}`);
 
             // Twelve hours ahead of now: a device whose clock runs further into the future than
             // that is considered broken and its positions are dropped.
             const horizon = this.moment().add(12, "hours").format("YYYYMMDDHHmmss");
+            // One bean for the whole body, as in Java: the CANDAT message overwrites only six
+            // of its fields, so it carries whatever the last GPSDAT element left behind.
             const trx = new GpsTransaction();
 
             for (const element of this.bodyElements(req)) {
                 if (element.name === "GPSDAT") {
                     trx.applyAttrs(element.attrs);
-                    await this.storeGpsdat(req, trx, horizon);
+                    // Produced before the clock check, which lives on the database side only.
+                    if (toKafka) {
+                        await this.produceKafka(req, "sendgps", trx.toKafkaGpsPayload(),
+                            trx.sam_id, "Kafka Error:");
+                    }
+                    if (dbEnabled) await this.storeGpsdat(req, trx, horizon);
                 } else if (element.name === "CANDAT") {
-                    await this.storeCandat(req, element);
+                    await this.handleCandat(req, element, trx, dbEnabled, toKafka);
                 }
             }
             this.okResponse(res);
@@ -108,7 +115,7 @@ class SendGps extends ValidatorControllerBase {
     }
 
     /** CANDAT holds one VAL element per measured parameter, each its own can_data row. */
-    async storeCandat(req, element) {
+    async handleCandat(req, element, trx, dbEnabled, toKafka) {
         const attrs = lowerKeys(element.attrs);
         const base = {
             bus_id: attrs.bus_id || "",
@@ -119,8 +126,16 @@ class SendGps extends ValidatorControllerBase {
 
         for (const val of XmlWalk.descendants(element.node, "VAL")) {
             const attr = lowerKeys(val.attrs);
-            await this.withTransaction(req.dbConn, () => this.canDataDao.insert(req.dbConn,
-                { ...base, param_id: attr.id || "", param_value: attr.value || "" }, req.sessionId));
+            const can = { ...base, param_id: attr.id || "", param_value: attr.value || "" };
+            // The row is written before the message here, the other way round to GPSDAT.
+            if (dbEnabled) {
+                await this.withTransaction(req.dbConn,
+                    () => this.canDataDao.insert(req.dbConn, can, req.sessionId));
+            }
+            if (toKafka) {
+                await this.produceKafka(req, "sendgps", trx.toKafkaCanPayload(can),
+                    can.bus_id, "Kafka Error: ");
+            }
         }
     }
 }
