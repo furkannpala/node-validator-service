@@ -58,7 +58,7 @@ kuralı ile zorlanmıyor; kod bunlara uyacak şekilde yazılıyor. DAO katmanı 
 
 ## Migrasyon durumu
 
-Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 controller, 45 Oracle DAO, 10 SQLite DAO, 7 job, 3 strateji, 4 bean, 333 test.
+Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 controller, 45 Oracle DAO, 10 SQLite DAO, 7 job, 3 strateji, 4 bean, 338 test.
 (Ayrıca `oracle/` altında DAO olmayan 2 yardımcı: `tdSql.js` SQL builder, `apcBind.js` ortak projeksiyon.)
 
 **DAO sayısı neden Java'nın 9'undan fazla:** Java'da 9 DAO sınıfı vardı ama tüm SQL'in
@@ -86,7 +86,7 @@ node tools/compare/compareWrites.js  # yazma yolları        -> tools/compare/re
 > temizler. Yalnızca yerel test veritabanına doğrultulmalıdır.
 
 Son durum: okuma **46 aynı / 0 farklı** (4 endpoint doğası gereği karşılaştırılamaz ve
-raporda gerekçesiyle listelenir), yazma **6 aynı / 1 beklenen fark**.
+raporda gerekçesiyle listelenir), yazma **25 aynı / 1 beklenen fark** (26 vaka).
 
 Okuma tarafında normalize edilenler raporun başında listelenir — XML bildirimi, elemanlar
 arası boşluk, vaka bazında değişken alanlar, iki Oracle sürücüsünün de eklediği yardım
