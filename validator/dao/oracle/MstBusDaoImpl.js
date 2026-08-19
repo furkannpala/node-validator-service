@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 /**
  * senddata's gatekeeper. The bus must exist for the station type it claims, and on the bus
@@ -16,7 +17,7 @@ class MstBusDaoImpl extends BaseDao {
         + 'and validity_end_date >= pk_config.fn_get_operation_date(:opdate2) ';
 
     async query(conn, sql, binds, sessionId) {
-        this.ULog.debug(sql + " " + this.maskJson(binds), sessionId);
+        debugSql(sql, binds, sessionId);
         const result = await conn.execute(sql, binds,
             { outFormat: this.oracledb.OUT_FORMAT_OBJECT, autoCommit: false });
         return result.rows || [];

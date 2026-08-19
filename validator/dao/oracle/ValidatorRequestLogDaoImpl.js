@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 /**
  * The raw request body of the functions listed in save_request_log_functions. Java opened a
@@ -17,7 +18,7 @@ class ValidatorRequestLogDaoImpl extends BaseDao {
     /** One capped round, committed on its own; the job repeats it while there is more. */
     async purge(conn, days, batchRows, sessionId) {
         const binds = { days, batch_rows: batchRows };
-        this.ULog.debug(this.purgeSql + " " + this.maskJson(binds), sessionId);
+        debugSql(this.purgeSql, binds, sessionId);
         const result = await conn.execute(this.purgeSql, binds);
         const deleted = result.rowsAffected || 0;
         return { deleted, more: deleted >= batchRows };
@@ -33,7 +34,7 @@ class ValidatorRequestLogDaoImpl extends BaseDao {
             req_xml: { val: data.req_xml ?? null, type: this.oracledb.CLOB },
         };
         try {
-            this.ULog.debug(this.insertSql + " " + this.maskJson(binds), sessionId);
+            debugSql(this.insertSql, binds, sessionId);
             // No TX: this row commits on its own, as it did on its own connection in Java.
             const result = await conn.execute(this.insertSql, binds);
             return result.rowsAffected === 1;

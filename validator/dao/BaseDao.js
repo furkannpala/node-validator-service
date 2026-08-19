@@ -3,6 +3,7 @@ const { ULog } = require("../../../../lib/utils");
 const { maskJson } = require("../../util/LogMask");
 const { TX } = require("./daoUtil");
 const Constant = require("../../constant/Constant");
+const { debugSql } = require("./sqlLog");
 
 class BaseDao {
     ULog = ULog;
@@ -14,7 +15,7 @@ class BaseDao {
      * commit boundary is the controller's, one record at a time.
      */
     async exec(conn, sql, binds, sessionId) {
-        ULog.debug(sql + " " + maskJson(binds), sessionId);
+        debugSql(sql, binds, sessionId);
         const result = await conn.execute(sql, binds, TX);
         return result.rowsAffected || 0;
     }
@@ -40,7 +41,7 @@ class BaseDao {
      */
     async callLob(conn, sql, data, sessionId, lobType) {
         data.out_result = { dir: oracledb.BIND_OUT, type: lobType || oracledb.CLOB };
-        ULog.debug(sql + " " + maskJson(data), sessionId);
+        debugSql(sql, data, sessionId);
         const result = await conn.execute(sql, data);
         return await result.outBinds.out_result?.getData();
     }

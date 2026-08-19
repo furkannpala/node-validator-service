@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 // Feeds the TMS_BUS_STOP table of the route .db file. Java read every column with getString,
 // so the numeric ones are fetched as strings here too: SQLite stores what it is handed, and a
@@ -11,7 +12,7 @@ class TmsBusStopDaoImpl extends BaseDao {
 
     async getStops(conn, opdate, sessionId) {
         const binds = { opdate };
-        this.ULog.debug(this.getStopsSql + " " + this.maskJson(binds), sessionId);
+        debugSql(this.getStopsSql, binds, sessionId);
         const result = await conn.execute(this.getStopsSql, binds, {
             outFormat: this.oracledb.OUT_FORMAT_OBJECT,
             fetchArraySize: 2000,

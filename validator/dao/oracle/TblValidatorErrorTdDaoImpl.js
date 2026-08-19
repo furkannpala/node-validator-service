@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 /**
  * The evidence table for a record senddata could not store. It must survive the rollback of
@@ -22,7 +23,7 @@ class TblValidatorErrorTdDaoImpl extends BaseDao {
 
     async countSince(conn, since, sessionId) {
         const binds = { since };
-        this.ULog.debug(this.countSinceSql + " " + this.maskJson(binds), sessionId);
+        debugSql(this.countSinceSql, binds, sessionId);
         const result = await conn.execute(this.countSinceSql, binds,
             { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return result.rows || [];
@@ -31,7 +32,7 @@ class TblValidatorErrorTdDaoImpl extends BaseDao {
     /** Autocommit is left on: a retention round commits by itself, as the roadmap asks. */
     async purge(conn, days, batchRows, sessionId) {
         const binds = { days, batch_rows: batchRows };
-        this.ULog.debug(this.purgeSql + " " + this.maskJson(binds), sessionId);
+        debugSql(this.purgeSql, binds, sessionId);
         const result = await conn.execute(this.purgeSql, binds);
         const deleted = result.rowsAffected || 0;
         return { deleted, more: deleted >= batchRows };

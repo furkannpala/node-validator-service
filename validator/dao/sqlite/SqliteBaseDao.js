@@ -1,4 +1,4 @@
-const { ULog } = require("../../../../../lib/utils");
+const { debugSql } = require("../sqlLog");
 
 /**
  * Shared behaviour of the generated .db files. node:sqlite is synchronous, so the Oracle read
@@ -8,7 +8,7 @@ const { ULog } = require("../../../../../lib/utils");
 class SqliteBaseDao {
 
     exec(db, sql, sessionId) {
-        ULog.debug(sql, sessionId);
+        debugSql(sql, undefined, sessionId);
         db.exec(sql);
     }
 
@@ -23,7 +23,7 @@ class SqliteBaseDao {
      */
     insertAll(db, rows, sessionId) {
         if (!rows || !rows.length) return 0;
-        ULog.debug(`${this.insertSql} x${rows.length}`, sessionId);
+        debugSql(`${this.insertSql} x${rows.length}`, undefined, sessionId);
         const statement = db.prepare(this.insertSql);
         for (const row of rows) statement.run(...this.bind(row));
         return rows.length;

@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 /**
  * Both TBL_RFCARD statements of the service live here: getcardinfo reads the card, and the
@@ -16,7 +17,7 @@ class TblRfcardDaoImpl extends BaseDao {
     /** Returns the row, or null when the card is unknown; the caller answers differently. */
     async getCard(conn, cardNo, sessionId) {
         const binds = { card_no: cardNo };
-        this.ULog.debug(this.getCardSql + " " + this.maskJson(binds), sessionId);
+        debugSql(this.getCardSql, binds, sessionId);
         const result = await conn.execute(this.getCardSql, binds,
             { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return (result.rows || [])[0] || null;

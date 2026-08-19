@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 // Two lookups senddata needs while building a trip row. Both swallow their errors in Java and
 // fall back to a neutral value, so a missing pattern never costs the record.
@@ -23,7 +24,7 @@ class UtilDaoImpl extends BaseDao {
 
     async scalar(conn, sql, binds, column, fallback, sessionId) {
         try {
-            this.ULog.debug(sql + " " + this.maskJson(binds), sessionId);
+            debugSql(sql, binds, sessionId);
             const result = await conn.execute(sql, binds,
                 { outFormat: this.oracledb.OUT_FORMAT_OBJECT, autoCommit: false });
             const row = (result.rows || [])[0];

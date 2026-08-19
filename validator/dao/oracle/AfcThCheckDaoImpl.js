@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 // A driver may only have one open shift. Any AFC_TH row for today on another SAM means the
 // previous bus never closed its session.
@@ -10,7 +11,7 @@ class AfcThCheckDaoImpl extends BaseDao {
 
     async isAnotherSessionExists(conn, samId, driverId, sessionId) {
         const binds = { sam_id: samId, driver_code: driverId };
-        this.ULog.debug(this.anotherSessionSql + " " + this.maskJson(binds), sessionId);
+        debugSql(this.anotherSessionSql, binds, sessionId);
         const result = await conn.execute(this.anotherSessionSql, binds);
         return (result.rows || []).length > 0;
     }

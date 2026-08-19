@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 /**
  * Only the two standalone selects live here. The other PK_CONFIG functions
@@ -11,14 +12,14 @@ class PkConfigDaoImpl extends BaseDao {
     dataForwardUrlSql = ' SELECT pk_config.FN_GET_TE_DATAFORWARD_URL AS URL FROM DUAL ';
 
     async getOperationPdate(conn, sessionId) {
-        this.ULog.debug(this.operationPdateSql, sessionId);
+        debugSql(this.operationPdateSql, undefined, sessionId);
         const result = await conn.execute(this.operationPdateSql, {},
             { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return result.rows[0]?.PDATE;
     }
 
     async getDataForwardUrl(conn, sessionId) {
-        this.ULog.debug(this.dataForwardUrlSql, sessionId);
+        debugSql(this.dataForwardUrlSql, undefined, sessionId);
         const result = await conn.execute(this.dataForwardUrlSql, {},
             { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return result.rows[0]?.URL;

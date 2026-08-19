@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 /**
  * The trip row. Java ran one of four UPDATEs and inserted when it touched no row, so upsert #1
@@ -120,7 +121,7 @@ class AfcTfDaoImpl extends BaseDao {
     mergeDriverChangeSql = mergeBus(USING_SAM_KEY, SET_DRIVER_CHANGE);
 
     async exists(conn, sql, binds, sessionId) {
-        this.ULog.debug(sql + " " + this.maskJson(binds), sessionId);
+        debugSql(sql, binds, sessionId);
         const result = await conn.execute(sql, binds, { autoCommit: false });
         return (result.rows || []).length > 0;
     }

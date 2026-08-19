@@ -1,4 +1,5 @@
 const BaseDao = require("../BaseDao");
+const { debugSql } = require("../sqlLog");
 
 // verifydriver picks one of these by the verify_driver_comp config: the second one also
 // demands that the driver and the bus belong to the same company.
@@ -17,7 +18,7 @@ class MstPersonelDaoImpl extends BaseDao {
     async getPin(conn, driverId, busId, withComp, sessionId) {
         const sql = withComp ? this.getPinWithCompSql : this.getPinSql;
         const binds = withComp ? { driver_code: driverId, bus_id: busId } : { driver_code: driverId };
-        this.ULog.debug(sql + " " + this.maskJson(binds), sessionId);
+        debugSql(sql, binds, sessionId);
         const result = await conn.execute(sql, binds, { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return (result.rows || [])[0] || null;
     }
