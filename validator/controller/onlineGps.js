@@ -33,7 +33,7 @@ class OnlineGps extends ValidatorControllerBase {
             }
             this.okResponse(res);
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

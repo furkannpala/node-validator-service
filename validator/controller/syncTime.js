@@ -10,7 +10,7 @@ class SyncTime extends ValidatorControllerBase {
                 TIMESYNC: { _attributes: { datetime: this.moment().format("YYYYMMDDHHmmss") } },
             });
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

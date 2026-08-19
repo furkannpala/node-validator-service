@@ -25,7 +25,7 @@ class GetOfflineCardList extends ValidatorControllerBase {
             res.setHeader("Content-Type", isBlob ? "application/octet-stream" : "text/xml");
             res.locals.data = data;
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

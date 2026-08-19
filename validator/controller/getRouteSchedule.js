@@ -4,6 +4,9 @@ class GetRouteSchedule extends ValidatorControllerBase {
     constructor() {
         super();
         this.daoImpl = this.daoFactory.get("PkAppValDaoImpl");
+        // Java replaced the database failure with this text before it reached the
+        // device; the ORA code only goes to the log.
+        this.dbErrorMessage = "Database error occurred";
     }
 
     async func(req, res, next) {
@@ -24,7 +27,7 @@ class GetRouteSchedule extends ValidatorControllerBase {
             res.setHeader("Content-Type", "text/xml");
             res.locals.data = data;
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

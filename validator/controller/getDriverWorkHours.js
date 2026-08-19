@@ -4,6 +4,9 @@ class GetDriverWorkHours extends ValidatorControllerBase {
     constructor() {
         super();
         this.daoImpl = this.daoFactory.get("PkAppValDaoImpl");
+        // Java replaced the database failure with this text before it reached the
+        // device; the ORA code only goes to the log.
+        this.dbErrorMessage = "Error occurred while fetching driver work hours";
     }
 
     async func(req, res, next) {
@@ -21,7 +24,7 @@ class GetDriverWorkHours extends ValidatorControllerBase {
             res.setHeader("Content-Type", "text/xml");
             res.locals.data = data;
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

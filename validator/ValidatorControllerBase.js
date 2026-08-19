@@ -7,6 +7,7 @@ const Constant = require("../constant/Constant");
 const XmlWalk = require("../util/XmlWalk");
 const HttpUtil = require("../util/HttpUtil");
 const KafkaProducer = require("../util/KafkaProducer");
+const DatabaseError = require("../util/DatabaseError");
 
 class ValidatorControllerBase {
     constructor() {
@@ -133,11 +134,30 @@ class ValidatorControllerBase {
         res.locals.data = this.getXmlResponse(0, "");
     }
 
-    getServiceError(error) {
+    /**
+     * Java's top-level catch answered the device with e.getMessage() and nothing else. The
+     * stack is logged instead of sent: the document reaches a validator on a public network
+     * and a Node stack carries absolute server paths.
+     */
+    getServiceError(error, req) {
         if (!error) return new ServiceError(-8, "Unknown error");
         if (error instanceof ServiceError) return error;
-        const message = error?.stack || error?.message || "Unknown error";
-        return new ServiceError(-8, message);
+        // The ServiceError built below carries its own stack, so the original is logged here
+        // or it is lost for good.
+        ULog.error(error?.stack || error?.message, req?.sessionId);
+        if (this.dbErrorMessage && this.masksError(error)) {
+            return new ServiceError(-8, this.dbErrorMessage);
+        }
+        return new ServiceError(-8, error?.message || "Unknown error");
+    }
+
+    /**
+     * Most of the Java retrieve funcs caught SQLException and replaced it with a fixed text, so
+     * an ORA code never reached the device; two of them caught every exception that way. A
+     * controller opts in by setting dbErrorMessage, and dbErrorScope 'all' for the wider pair.
+     */
+    masksError(error) {
+        return this.dbErrorScope === "all" || DatabaseError.isSqlError(error);
     }
 }
 

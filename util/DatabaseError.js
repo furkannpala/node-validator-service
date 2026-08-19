@@ -60,4 +60,6 @@ function getErrorMessage(error) {
     return error?.message;
 }
 
-module.exports = { isSqlDataFormatError, getErrorCode, getErrorMessage };
+// isSqlError is exported for the controller base: the Java retrieve funcs caught SQLException
+// specifically, so masking has to tell a database failure from any other one.
+module.exports = { isSqlDataFormatError, isSqlError, getErrorCode, getErrorMessage };

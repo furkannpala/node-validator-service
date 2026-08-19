@@ -9,7 +9,7 @@ class GetVersion extends ValidatorControllerBase {
             res.setHeader("Content-Type", "text/xml");
             res.locals.data = this.getXmlResponse(0, system_cfg.version);
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

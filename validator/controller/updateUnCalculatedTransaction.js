@@ -22,7 +22,7 @@ class UpdateUnCalculatedTransaction extends ValidatorControllerBase {
             await this.store(req);
             this.okResponse(res);
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

@@ -22,7 +22,7 @@ class GetFiles extends ValidatorControllerBase {
                 String(data.lobType).toLowerCase() === "blob" ? "application/octet-stream" : "text/xml");
             res.locals.data = data.content;
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

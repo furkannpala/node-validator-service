@@ -29,7 +29,7 @@ class GetRunInProgressReport extends ValidatorControllerBase {
             res.setHeader("Content-Type", "text/xml");
             res.locals.data = data;
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

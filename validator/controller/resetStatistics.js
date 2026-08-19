@@ -11,7 +11,7 @@ class ResetStatistics extends ValidatorControllerBase {
             res.setHeader("Content-Type", "text/plain; charset=utf-8");
             res.locals.data = "OK";
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

@@ -31,7 +31,7 @@ class SendData extends ValidatorControllerBase {
             await this.forwardToTicketEngine(req);
             this.okResponse(res);
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }

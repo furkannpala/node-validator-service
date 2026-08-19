@@ -27,7 +27,7 @@ class GetUnCalculatedTransaction extends ValidatorControllerBase {
             res.locals.data = this.js2Xml({ ROOT: fares.length ? { FARE: fares } : {} },
                 { compact: true, ignoreComment: true, spaces: 0 });
         } catch (error) {
-            respErr = this.getServiceError(error);
+            respErr = this.getServiceError(error, req);
         } finally {
             next(respErr);
         }
