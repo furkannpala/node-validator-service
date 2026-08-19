@@ -72,6 +72,22 @@ Java'daki 67 `?func=` dalının 65'i taşındı. Kalan 2'si (`getcardlist`, `get
 
 Kalan iş: Faz 9 (karşılaştırma ve geçiş).
 
+## Java'dan bilinçli sapmalar
+
+Servis Java'yı birebir taklit eder; aşağıdakiler bilerek ayrılan yerlerdir. Faz 9'daki `MINUS`
+karşılaştırmasında **beklenen fark** olarak işlenir ve sürüm notuna girer. Gerekçelerin tamamı
+`validator-migration-notlar.txt` içinde.
+
+| # | Konu | Java | Node | Neden |
+|---|---|---|---|---|
+| 1 | Transaction | Yok, her INSERT kendi commit'i | Kayıt başına açık transaction | Bir kaydın tabloları arası tutarlılığı; roadmap §4 |
+| 2 | Veri formatı hatasından sonrası | Gövdenin kalanı **hiç işlenmez**, cihaza OK | Kalan kayıtlar yazılır | Bir kayıt = parası alınmış gerçek bir yolculuk. Cihaz OK alınca gövdeyi bir daha göndermez, o yüzden Java'nın davranışı sessiz veri kaybı. Notlar [48] |
+| 3 | `sendgps` eksik `MAIN_EVENT` | NullPointerException, tüm istek düşer | Kayıt normal yazılır | Notlar [15] |
+| 4 | `getroute` LOB boş | `setMessage(-97)` sonrası NPE | `-97` dönülüp durulur | Notlar [11] |
+| 5 | `getrouteinfodb?cache=1` | Stream kullanılmadan kapatılıyor, **her zaman** patlar | Dosya okunup döner | Notlar [37] |
+| 6 | XML-RPC (`sendalarm`) | Timeout yok, takılan cihaz isteği süresiz tutar | 5 sn | Notlar [15] |
+| 7 | Kesik gövde | `DocumentBuilder` SAXException atar | `XmlWalk.assertWellFormed` sezgisel kontrolü | xml-js kesik gövdeyi kabul ediyor; notlar [26] |
+
 ## Kafka üretimi (Faz 8)
 
 Java `KkAvlProducer` + `KkKafkaConfigurator` → `util/KafkaProducer.js` (`kafkajs`, parent projeden).
