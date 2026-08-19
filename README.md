@@ -72,6 +72,21 @@ Java'daki 67 `?func=` dalının 65'i taşındı. Kalan 2'si (`getcardlist`, `get
 
 Kalan iş: Faz 9.2 yük testi, 9.5 paralel çalıştırma, 9.6 kademeli geçiş.
 
+## Kontrol paneli
+
+```
+node tools/panel/server.js     ->  http://localhost:3100
+```
+
+Bu bölümdeki her şeyi düğmeyle çalıştırır: iki servisi başlat/durdur, KKCONFIG ve test
+verisini bas, test satırlarını temizle, karşılaştırmaları ve yük matrisini koştur, raporları
+oku. Çıktı canlı akar (SSE). Yalnız loopback'e bağlanır — komut çalıştırıp satır sildiği için
+ağa açılmamalıdır.
+
+Panelin bastığı SQL `tools/panel/sql/` altında: `seed-kkconfig.sql` (env.properties'ten
+18 satır), `seed-testdata.sql` (otobüs `00001`, istasyon `00002`, sürücü `D0001`),
+`clean.sql` (yalnız araçların yazdığı satırlar; seed verisi ve KKCONFIG kalır).
+
 ## Java ile karşılaştırma (Faz 9)
 
 `tools/compare/` iki servise aynı isteği gönderip cevapları ve yazılan satırları karşılaştırır.

@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Validator Migrasyon Paneli</title>
+<style>
+:root {
+    --bg: #0f1117; --panel: #171a21; --line: #262b36; --text: #e6e8ee;
+    --muted: #8b93a7; --ok: #3fb950; --bad: #f85149; --warn: #d29922; --accent: #4c8dff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
+}
+header {
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+}
+h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.status { display: flex; gap: 14px; flex-wrap: wrap; margin-left: auto; }
+.pill {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--ok); }
+.dot.off { background: var(--bad); }
+main { display: grid; grid-template-columns: 300px 1fr; gap: 0; height: calc(100vh - 57px); }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } }
+aside { border-right: 1px solid var(--line); padding: 16px; overflow-y: auto; }
+section.group { margin-bottom: 20px; }
+section.group h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 0 0 8px; font-weight: 600;
+}
+button {
+    display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 8px 10px;
+    background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.danger { border-color: #4a2020; }
+button.danger:hover:not(:disabled) { border-color: var(--bad); }
+.right { display: flex; flex-direction: column; min-width: 0; }
+.tabs { display: flex; gap: 4px; padding: 10px 16px 0; border-bottom: 1px solid var(--line); }
+.tab {
+    padding: 7px 14px; font-size: 13px; cursor: pointer; color: var(--muted);
+    border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0;
+}
+.tab.active { color: var(--text); background: var(--panel); border-color: var(--line); }
+.pane { display: none; flex: 1; overflow: auto; padding: 14px 16px; }
+.pane.active { display: block; }
+pre {
+    margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+}
+#log .err { color: var(--bad); }
+#log .head { color: var(--accent); font-weight: 600; }
+#log .warnline { color: var(--warn); }
+.bar {
+    padding: 8px 16px; border-top: 1px solid var(--line); display: flex; gap: 10px;
+    align-items: center; font-size: 12px; color: var(--muted);
+}
+.note {
+    font-size: 11px; color: var(--muted); margin: 6px 0 0; line-height: 1.45;
+}
+table { border-collapse: collapse; font-size: 12px; }
+th, td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+th { background: var(--panel); }
+</style>
+</head>
+<body>
+<header>
+    <h1>Validator Migrasyon Paneli</h1>
+    <div class="status" id="status">
+        <span class="pill"><span class="dot" id="d-oracle"></span>Oracle</span>
+        <span class="pill"><span class="dot" id="d-tomcat"></span>Tomcat</span>
+        <span class="pill"><span class="dot" id="d-java"></span>Java servis</span>
+        <span class="pill"><span class="dot" id="d-node"></span>Node servis</span>
+    </div>
+</header>
+
+<main>
+<aside>
+    <section class="group">
+        <h2>Servisler</h2>
+        <button data-run="both-start">İkisini birden başlat</button>
+        <button data-run="node-start">Node başlat</button>
+        <button data-run="node-stop">Node durdur</button>
+        <button data-run="war-start">WAR (Tomcat) başlat</button>
+        <button data-run="war-stop">WAR durdur</button>
+    </section>
+
+    <section class="group">
+        <h2>Veritabanı</h2>
+        <button data-run="seed-kkconfig">KKCONFIG seed (18 satır)</button>
+        <button data-run="seed-testdata">Test verisi seed (otobüs, sürücü)</button>
+        <button class="danger" data-run="clean-db">Test satırlarını temizle</button>
+        <p class="note">Temizleme yalnız araçların yazdığı satırları siler; seed verisi ve
+        KKCONFIG kalır. Sadece yerel test şemasına yöneltilmelidir.</p>
+    </section>
+
+    <section class="group">
+        <h2>Karşılaştırma</h2>
+        <button data-run="compare-read">Okuma karşılaştırması</button>
+        <button data-run="compare-write">Yazma karşılaştırması</button>
+        <p class="note">Yazma karşılaştırması iki koşu arasında ilgili satırları siler —
+        aksi hâlde ikinci servis birincinin anahtarlarına çarpar.</p>
+    </section>
+
+    <section class="group">
+        <h2>Performans</h2>
+        <button data-run="load-quick">Hızlı yük (senddata, 8 sn)</button>
+        <button data-run="load-matrix">Tam yük matrisi (~3 dk)</button>
+        <p class="note">Donanım kıyaslaması değildir: Java konteynerde, Node doğrudan
+        makinede çalışıyor.</p>
+    </section>
+
+    <section class="group">
+        <h2>Testler</h2>
+        <button data-run="tests">Birim testler</button>
+    </section>
+</aside>
+
+<div class="right">
+    <div class="tabs">
+        <div class="tab active" data-pane="log">Çıktı</div>
+        <div class="tab" data-pane="read">Okuma raporu</div>
+        <div class="tab" data-pane="write">Yazma raporu</div>
+        <div class="tab" data-pane="load">Yük raporu</div>
+    </div>
+    <div class="pane active" id="pane-log"><pre id="log">Hazır. Soldan bir işlem seç.</pre></div>
+    <div class="pane" id="pane-read"><pre id="rep-read">—</pre></div>
+    <div class="pane" id="pane-write"><pre id="rep-write">—</pre></div>
+    <div class="pane" id="pane-load"><pre id="rep-load">—</pre></div>
+    <div class="bar">
+        <span id="state">boşta</span>
+        <button style="width:auto;margin:0;padding:4px 10px" id="clear">Çıktıyı temizle</button>
+    </div>
+</div>
+</main>
+
+<script>
+const log = document.getElementById('log');
+const stateLabel = document.getElementById('state');
+let busy = false;
+
+function append(line) {
+    const span = document.createElement('span');
+    if (/^===/.test(line) || /^---/.test(line)) span.className = 'head';
+    else if (/\[hata\]|\bERROR\b|hata [1-9]|GECERSIZ|FARK/.test(line)) span.className = 'err';
+    else if (/^\[!\]|bekl/.test(line)) span.className = 'warnline';
+    span.textContent = line + '\n';
+    log.appendChild(span);
+    log.parentElement.scrollTop = log.parentElement.scrollHeight;
+}
+
+function setBusy(on, label) {
+    busy = on;
+    stateLabel.textContent = on ? ('çalışıyor: ' + label) : 'boşta';
+    document.querySelectorAll('button[data-run]').forEach((b) => { b.disabled = on; });
+}
+
+const events = new EventSource('/api/events');
+events.addEventListener('log', (e) => append(JSON.parse(e.data).line));
+events.addEventListener('busy', (e) => setBusy(true, JSON.parse(e.data).label));
+events.addEventListener('idle', () => { setBusy(false); refreshStatus(); refreshReports(); });
+
+document.querySelectorAll('button[data-run]').forEach((button) => {
+    button.addEventListener('click', async () => {
+        if (busy) return;
+        setBusy(true, button.textContent);
+        await fetch('/api/run/' + button.dataset.run, { method: 'POST' });
+        // A job that spawns nothing (node start/stop) never emits idle, so poll back.
+        setTimeout(() => { refreshStatus(); if (!busy) setBusy(false); }, 7000);
+    });
+});
+
+document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+        document.querySelectorAll('.pane').forEach((p) => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('pane-' + tab.dataset.pane).classList.add('active');
+    });
+});
+
+document.getElementById('clear').addEventListener('click', () => { log.textContent = ''; });
+
+async function refreshStatus() {
+    try {
+        const s = await (await fetch('/api/status')).json();
+        for (const key of ['oracle', 'tomcat', 'java', 'node']) {
+            document.getElementById('d-' + key).className = 'dot ' + (s[key] ? 'on' : 'off');
+        }
+        if (s.running) setBusy(true, s.running);
+    } catch (e) { /* panel kapanmis olabilir */ }
+}
+
+async function refreshReports() {
+    for (const name of ['read', 'write', 'load']) {
+        try {
+            document.getElementById('rep-' + name).textContent =
+                await (await fetch('/api/report?name=' + name)).text();
+        } catch (e) { /* yoksa bosver */ }
+    }
+}
+
+refreshStatus();
+refreshReports();
+setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>
