@@ -58,7 +58,7 @@ kuralı ile zorlanmıyor; kod bunlara uyacak şekilde yazılıyor. DAO katmanı 
 
 ## Migrasyon durumu
 
-Faz 1-8 tamamlandı: 65 controller, 45 Oracle DAO, 10 SQLite DAO, 7 job, 3 strateji, 4 bean, 324 test.
+Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 controller, 45 Oracle DAO, 10 SQLite DAO, 7 job, 3 strateji, 4 bean, 333 test.
 (Ayrıca `oracle/` altında DAO olmayan 2 yardımcı: `tdSql.js` SQL builder, `apcBind.js` ortak projeksiyon.)
 
 **DAO sayısı neden Java'nın 9'undan fazla:** Java'da 9 DAO sınıfı vardı ama tüm SQL'in
@@ -70,7 +70,27 @@ tablo/paket sayısına eşit oldu. Roadmap §21 bunu 59 olarak öngörmüştü.
 Java'daki 67 `?func=` dalının 65'i taşındı. Kalan 2'si (`getcardlist`, `getonlineschedule`)
 ölü kod, taşınmayacak. **Endpoint borcu kalmadı.**
 
-Kalan iş: Faz 9 (karşılaştırma ve geçiş).
+Kalan iş: Faz 9.2 yük testi, 9.5 paralel çalıştırma, 9.6 kademeli geçiş.
+
+## Java ile karşılaştırma (Faz 9)
+
+`tools/compare/` iki servise aynı isteği gönderip cevapları ve yazılan satırları karşılaştırır.
+Mocha ile çalışmaz; elle çalıştırılan bir kabul aracıdır ve iki servisin de ayakta olmasını ister.
+
+```
+node tools/compare/compare.js        # okuma endpoint'leri  -> tools/compare/report.md
+node tools/compare/compareWrites.js  # yazma yolları        -> tools/compare/report-writes.md
+```
+
+> `compareWrites.js` **veri siler**: her vakanın satırlarını iki koşu arasında ve sonunda
+> temizler. Yalnızca yerel test veritabanına doğrultulmalıdır.
+
+Son durum: okuma **46 aynı / 0 farklı** (4 endpoint doğası gereği karşılaştırılamaz ve
+raporda gerekçesiyle listelenir), yazma **6 aynı / 1 beklenen fark**.
+
+Okuma tarafında normalize edilenler raporun başında listelenir — XML bildirimi, elemanlar
+arası boşluk, vaka bazında değişken alanlar, iki Oracle sürücüsünün de eklediği yardım
+bağlantısı ve `{call}` → `BEGIN…END;` dönüşümünün kaydırdığı ORA-06550 konumu.
 
 ## Java'dan bilinçli sapmalar
 
