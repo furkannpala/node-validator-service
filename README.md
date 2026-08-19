@@ -88,6 +88,25 @@ node tools/compare/compareWrites.js  # yazma yolları        -> tools/compare/re
 Son durum: okuma **46 aynı / 0 farklı** (4 endpoint doğası gereği karşılaştırılamaz ve
 raporda gerekçesiyle listelenir), yazma **25 aynı / 1 beklenen fark** (26 vaka).
 
+## Yük karşılaştırması (Faz 9.2)
+
+```
+node tools/load/load.js --matrix 1 --seconds 12
+```
+
+Aynı isteği iki servise sürüp taşıdıkları yükü raporlar (`tools/load/report-load.md`).
+**Donanım kıyaslaması değildir** — Java konteynerde, bu servis doğrudan makinede çalışıyor;
+anlamlı olan şekil. Isınma şart: ısınmasız ölçüm JIT maliyetini Java'nın sırtına yıkar.
+
+Eşzamanlılık 8'de bu servis Java'nın **%65–98**'ini taşıyor (prosedür çağrısında %98,
+okumada %89, `senddata`'da %65).
+
+**Pool eşiği — geçiş öncesi karar gerektiren madde.** `senddata`'da eşzamanlılık pool
+boyutunu (10) aştığında bu servis kuyruğa almak yerine `-99 getConnection Err` dönüyor:
+12'de %2, 16'da isteklerin %78'i. Java'nın Tomcat pool'u 10 sn bekliyor ve hiç istek
+düşürmüyor, p95 yükseliyor. Roadmap risk #15'in ölçülmüş hâli; ayar parent projede
+(`config/index.js` + framework `queueMax`).
+
 Okuma tarafında normalize edilenler raporun başında listelenir — XML bildirimi, elemanlar
 arası boşluk, vaka bazında değişken alanlar, iki Oracle sürücüsünün de eklediği yardım
 bağlantısı ve `{call}` → `BEGIN…END;` dönüşümünün kaydırdığı ORA-06550 konumu.
