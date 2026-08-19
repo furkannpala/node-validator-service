@@ -148,6 +148,9 @@ class DataTransaction {
         this.tfType = null;
         this.travelType = null;
         this.odometerStart = 0;
+        // Java's local started at "0" and only the F path ever computed it, so the placeholder
+        // trip a D record opens carries a zero rather than a null.
+        this.totalStopCnt = '0';
         this.originSystemId = null;
         this.transfer_ref_code = null;
         this.pathCode = null;

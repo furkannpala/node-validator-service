@@ -121,3 +121,27 @@ describe('td insert builder', () => {
         assert.ok(!columns.includes('origin_system_id'), columns.join(','));
     });
 });
+
+describe('coordinate binding', () => {
+    const { usesSetFloat, bindFor } = require('../../validator/dao/oracle/tdSql');
+    // 38.4 as a float is 38.400001525878906; setObject sends that double and the column keeps
+    // it, while setFloat sends the shortest decimal that reads back as the same float.
+    const trx = { tfType: '1', lat: Math.fround(38.4), lng: Math.fround(27.1) };
+
+    it('follows the variant, because the Java daos are not consistent about it', () => {
+        // AfcTdDaoImpl called setFloat only where origin_system_id is carried.
+        assert.strictEqual(usesSetFloat('afc_td', {}), false);
+        assert.strictEqual(usesSetFloat('afc_td', { originSystemId: true }), true);
+        assert.strictEqual(usesSetFloat('afc_td', { extendedFare: true }), false);
+        // AfcBlTd and AfcTdTest switch on the extended fare instead.
+        assert.strictEqual(usesSetFloat('afc_bl_td', { extendedFare: true }), true);
+        assert.strictEqual(usesSetFloat('afc_td_test', {}), false);
+    });
+
+    it('keeps the whole expansion on a setObject variant and the short form on a setFloat one', () => {
+        assert.strictEqual(bindFor('afc_td', trx, {}).lat, 38.400001525878906);
+        assert.strictEqual(bindFor('afc_td', trx, { originSystemId: true }).lat, 38.4);
+        assert.strictEqual(bindFor('afc_bl_td', trx, { extendedFare: true }).lng, 27.1);
+        assert.strictEqual(bindFor('afc_bl_td', trx, {}).lng, 27.100000381469727);
+    });
+});

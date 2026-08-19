@@ -154,6 +154,7 @@ class DRecordStrategy {
      */
     normalize(trx, cfg) {
         const multiplier = cfg.currencyMultiplier;
+        this.readPosition(trx);
         // fn_get_tf_id's third argument. The bus path always passes 1; only the station
         // strategy of ins_station ever passes 2.
         trx.tfType = '1';
@@ -174,6 +175,24 @@ class DRecordStrategy {
 
         trx.originSystemId = ORIGIN_SYSTEM_IDS.has(String(cfg.systemId))
             ? String(trx.card_no).substring(0, 3) : null;
+    }
+
+    /**
+     * The coordinate the device reported with the tap. Java parsed both inside one try and set
+     * both to zero if either failed, so a half-readable position is stored as no position.
+     * The value kept here is the float Java held; how it reaches the column depends on which
+     * insert variant runs, which tdSql decides.
+     */
+    readPosition(trx) {
+        const lat = StringUtil.tryParseDouble(trx.latitude, null);
+        const lng = StringUtil.tryParseDouble(trx.longitude, null);
+        if (lat === null || lng === null) {
+            trx.lat = 0;
+            trx.lng = 0;
+            return;
+        }
+        trx.lat = Math.fround(lat);
+        trx.lng = Math.fround(lng);
     }
 
     /** An absent passenger count means one passenger, except on the one system that says zero. */

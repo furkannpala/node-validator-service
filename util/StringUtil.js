@@ -15,6 +15,22 @@ function parseIntStrict(str) {
     return n;
 }
 
+/**
+ * A Java float on its way into a NUMBER column. setFloat did not write the exact binary value:
+ * the driver wrote the shortest decimal that reads back as the same float, which is what
+ * Float.toString gives. Math.fround alone turns 38.4 into 38.400001525878906, and that is what
+ * ends up in the column if it is bound directly.
+ */
+function toJavaFloat(value) {
+    const single = Math.fround(value);
+    if (!Number.isFinite(single)) return single;
+    for (let digits = 1; digits <= 9; digits++) {
+        const candidate = Number(single.toPrecision(digits));
+        if (Math.fround(candidate) === single) return candidate;
+    }
+    return single;
+}
+
 function parseDoubleStrict(str) {
     if (str === null || str === undefined) {
         throw new Error('NullPointerException: null double');
@@ -58,4 +74,5 @@ module.exports = {
     tryParseDouble,
     tryParseLong,
     lpadZero,
+    toJavaFloat,
 };

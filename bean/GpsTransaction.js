@@ -62,7 +62,7 @@ class GpsTransaction {
         const lat = StringUtil.tryParseDouble(this.latitude, null);
         const lng = StringUtil.tryParseDouble(this.longitude, null);
         if (lat === null || lng === null) return { lat: 0, lng: 0 };
-        return { lat: Math.fround(lat), lng: Math.fround(lng) };
+        return { lat: StringUtil.toJavaFloat(lat), lng: StringUtil.toJavaFloat(lng) };
     }
 
     getEvents() {

@@ -1,3 +1,5 @@
+const StringUtil = require("../../../util/StringUtil");
+
 /**
  * AFC_TD, AFC_BL_TD and AFC_TD_TEST are written by 16 hand-written INSERT variants in Java
  * (8 + 4 + 4), each one a string concatenation of the same base column list with a different
@@ -146,6 +148,17 @@ function tdBind(trx) {
     };
 }
 
+/**
+ * Which of the two float bindings the hand-written Java variant used for LAT and LNG. They are
+ * not consistent: AfcTdDaoImpl called setFloat only on the variants that carry origin_system_id
+ * and setObject(Float, Types.FLOAT) on the rest, while AfcBlTd and AfcTdTest switch on the
+ * extended fare instead. setObject goes through a double, so the column keeps the whole binary
+ * expansion of the float (38.4000015); setFloat keeps the shortest decimal (38.4).
+ */
+function usesSetFloat(table, options) {
+    return table === 'afc_td' ? !!options.originSystemId : !!options.extendedFare;
+}
+
 function bindFor(table, trx, options = {}) {
     // Only the binds the chosen variant references: an extra one is ORA-01036 on some drivers.
     const text = columnsFor(table, options).map((p) => p[1]).join(',');
@@ -162,7 +175,12 @@ function bindFor(table, trx, options = {}) {
     if (on('extendedFare')) binds.extended_fare = trx.extendedFare;
     if (on('originSystemId')) binds.origin_system_id = trx.originSystemId;
     if (on('qrData')) binds.qr_data = trx.qr_data;
+    // The short tables stop before LAT and LNG, so there is nothing to convert there.
+    if (referenced.has(':lat') && usesSetFloat(table, options)) {
+        binds.lat = StringUtil.toJavaFloat(trx.lat);
+        binds.lng = StringUtil.toJavaFloat(trx.lng);
+    }
     return binds;
 }
 
-module.exports = { columnsFor, buildInsert, bindFor };
+module.exports = { columnsFor, buildInsert, bindFor, usesSetFloat };
