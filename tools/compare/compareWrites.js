@@ -19,6 +19,8 @@ const DEFAULTS = {
     node: 'http://localhost:3099/Validator Services',
     system: '017',
     out: path.join(__dirname, 'report-writes.md'),
+    // Substring of a case name, to run one case while chasing a difference down.
+    only: '',
 };
 
 function parseArgs(argv) {
@@ -30,9 +32,13 @@ function parseArgs(argv) {
     return options;
 }
 
+/**
+ * The predicate that finds this case's rows in one table. Most tables carry the same identifier,
+ * but not all of them: AFC_CAN keys the bus by HOSTNAME and TMS_DOOR_STATUS has no bus column
+ * at all, so a case can name the odd ones in `keys`.
+ */
 function keyFor(testCase, table) {
-    return table === 'tbl_validator_error_td' && testCase.errorTdKey
-        ? testCase.errorTdKey : testCase.key;
+    return (testCase.keys && testCase.keys[table]) || testCase.key;
 }
 
 function clear(testCase) {
@@ -159,7 +165,9 @@ async function main() {
     const options = parseArgs(process.argv.slice(2));
     const results = [];
 
-    for (const testCase of CASES) {
+    const cases = options.only
+        ? CASES.filter((c) => c.name.includes(options.only)) : CASES;
+    for (const testCase of cases) {
         const result = await runCase(options, testCase);
         results.push(result);
         const mark = result.findings.length === 0 ? '  ok  '

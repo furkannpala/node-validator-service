@@ -49,7 +49,9 @@ function commonBind(trx) {
         alias_no: trx.alias_no,
         total_stop_cnt: trx.totalStopCnt,
         trip_stop_cnt: trx.trip_stop_cnt,
-        odometer: trx.odometer,
+        // Java bound its iodometer, which only the travel types that run the preparation step
+        // ever set; the others leave the event row at zero however far the bus has driven.
+        odometer: trx.odometerStart,
         path_code: trx.pathCode,
     };
 }
@@ -68,8 +70,10 @@ class AfcTfEventDaoImpl extends BaseDao {
     }
 
     insertForStation(conn, trx, sessionId) {
+        // ins_station binds two literals here rather than the record's own values.
         return this.exec(conn, this.insertStationSql,
-            { ...commonBind(trx), sam_seq_no: trx.sam_seq_no }, sessionId);
+            { ...commonBind(trx), sam_seq_no: trx.sam_seq_no, path_code: '0', total_stop_cnt: '0' },
+            sessionId);
     }
 }
 

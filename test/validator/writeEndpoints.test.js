@@ -361,3 +361,25 @@ describe('verifydriver', () => {
         assert.strictEqual(conn.matching('MST_BUS').length, 1);
     });
 });
+
+describe('sendcfg health duplicate', () => {
+    it('keeps the config change when only the health row is a duplicate', async () => {
+        // Java committed the config row before the health insert and caught the duplicate on
+        // its own, so a body that carries the same device twice still records the change.
+        // Rolling the merge back with it lost a config update; the write comparison caught it.
+        const body = '<ROOT><VALAPPCONF bus_id="34AA0001" sam_id="05100001" pcb_id="a1"'
+            + ' input_voltage="12" battery_voltage="3"/>'
+            + '<VALAPPCONF bus_id="34AA0001" route_code="00200"/></ROOT>';
+        const conn = fakeConn((sql) =>
+            (sql.includes('INSERT INTO tbl_device_health') ? oracleError(1) : undefined));
+
+        const err = await run(sendCfg, makeReq(conn, {}, body), makeRes());
+
+        assert.strictEqual(err, undefined);
+        const merges = conn.matching('MERGE INTO tbl_device_cfg');
+        assert.strictEqual(merges.length, 2);
+        assert.strictEqual(merges[1].binds.route_code, '00200');
+        assert.strictEqual(conn.rollbacks, 0, 'a duplicate health row must not undo the merge');
+        assert.strictEqual(conn.commits, 2);
+    });
+});

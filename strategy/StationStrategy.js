@@ -79,6 +79,9 @@ class StationStrategy {
         trx.travelType = trx.travel_type;
         trx.half_progress_type = trx.hpt;
         trx.pathCode = trx.path_code;
+        // ins_station parses the odometer here for every travel type, unlike the bus path where
+        // only the types that run the preparation step ever set it.
+        trx.odometerStart = StringUtil.tryParseInt(trx.odometer, 0);
 
         await this.afcTfEvent.insertForStation(conn, trx, sessionId);
 

@@ -46,7 +46,15 @@ class SendCfg extends ValidatorControllerBase {
         try {
             await this.withTransaction(req.dbConn, async () => {
                 await this.cfgDao.merge(req.dbConn, trx, req.sessionId);
-                await this.healthDao.insert(req.dbConn, trx, req.sessionId);
+                // Java caught a duplicate on the health insert by itself and moved on, keeping
+                // the config row it had already committed. Rolling the merge back with it would
+                // lose a config change every time one body carries the same device twice, which
+                // the attributes-carry-over behaviour makes ordinary.
+                try {
+                    await this.healthDao.insert(req.dbConn, trx, req.sessionId);
+                } catch (error) {
+                    if (!isUniqueViolation(error)) throw error;
+                }
             });
         } catch (error) {
             // Java answered a duplicate key with `continue`, dropping the element without noise.

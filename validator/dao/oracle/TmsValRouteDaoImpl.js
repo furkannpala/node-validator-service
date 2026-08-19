@@ -29,7 +29,9 @@ function dataBind(trx) {
         travel_seq_no: trx.travel_seq_no,
         start_date_time: trx.start_date_time,
         sam_id: trx.sam_id,
-        trip_no: trx.trip_no,
+        // The TRIP_NO column is bound from old_route_code, which on an F record carries the
+        // trip number. The record's own trip_no attribute never reaches this table.
+        trip_no: trx.old_route_code,
         path_code: trx.pathCode,
         stop_seq_no: trx.stop_seq_no,
     };
