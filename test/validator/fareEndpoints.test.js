@@ -69,9 +69,9 @@ describe('getuncalculatedtransaction', () => {
         const err = await run(getUnCalculated, makeReq(conn, {}), res);
 
         assert.strictEqual(err, undefined);
-        assert.ok(res.locals.data.includes('system_id="001"'), 'the system id is hard coded');
-        assert.ok(res.locals.data.includes('card_no="6372430000000001"'));
-        assert.ok(res.locals.data.includes('route_code="100"'));
+        assert.ok(res.locals.data.includes('system_id = "001"'), 'the system id is hard coded');
+        assert.ok(res.locals.data.includes('card_no = "6372430000000001"'));
+        assert.ok(res.locals.data.includes('route_code = "100"'));
     });
 
     it('runs no query for a card type that has none', async () => {
@@ -87,7 +87,7 @@ describe('getuncalculatedtransaction', () => {
         const conn = fakeConn(answer(['09'], [{ ...FARE_ROW, ROUTE_CODE: null }]));
         const res = makeRes();
         await run(getUnCalculated, makeReq(conn, {}), res);
-        assert.ok(res.locals.data.includes('route_code="null"'));
+        assert.ok(res.locals.data.includes('route_code = "null"'));
     });
 
     it('answers with an empty document when the query fails', async () => {

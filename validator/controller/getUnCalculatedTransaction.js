@@ -5,6 +5,8 @@ const { ValidatorControllerBase } = require("../ValidatorControllerBase");
 const PRICED_CARD_TYPE = "09";
 // Hard-coded in Java: the answer always claims system 001, whatever the caller asked as.
 const REPORTED_SYSTEM_ID = "001";
+// The literal Java put at the head of the StringBuilder.
+const DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>';
 
 /** Taps the host has not priced yet, one FARE element each. */
 class GetUnCalculatedTransaction extends ValidatorControllerBase {
@@ -24,8 +26,7 @@ class GetUnCalculatedTransaction extends ValidatorControllerBase {
             }
 
             res.setHeader("Content-Type", "text/xml");
-            res.locals.data = this.js2Xml({ ROOT: fares.length ? { FARE: fares } : {} },
-                { compact: true, ignoreComment: true, spaces: 0 });
+            res.locals.data = `${DECLARATION}<ROOT>${fares.join("")}</ROOT>`;
         } catch (error) {
             respErr = this.getServiceError(error, req);
         } finally {
@@ -53,21 +54,26 @@ class GetUnCalculatedTransaction extends ValidatorControllerBase {
         }
     }
 
+    /**
+     * Assembled as text rather than through js2Xml because Java built it on a StringBuilder,
+     * spaces around the equals signs and all, and the device receives those bytes. An empty
+     * result is <ROOT></ROOT> there, never the self-closing form a serialiser would produce.
+     */
     fareElement(row) {
-        return {
-            _attributes: {
-                system_id: REPORTED_SYSTEM_ID,
-                pdate: this.text(row.PDATE),
-                sam_id: this.text(row.SAM_ID),
-                boarding_date_time: this.text(row.BOARDING_DATE_TIME),
-                card_no: this.text(row.CARD_NO),
-                usage_cnt: this.text(row.USAGE_CNT),
-                passenger_type: this.text(row.PASSENGER_TYPE),
-                route_code: this.text(row.ROUTE_CODE),
-                host_passenger_type: this.text(row.HOST_PASSENGER_TYPE),
-                card_type: this.text(row.CARD_TYPE),
-            },
-        };
+        const pairs = [
+            ["system_id", REPORTED_SYSTEM_ID],
+            ["pdate", this.text(row.PDATE)],
+            ["sam_id", this.text(row.SAM_ID)],
+            ["boarding_date_time", this.text(row.BOARDING_DATE_TIME)],
+            ["card_no", this.text(row.CARD_NO)],
+            ["usage_cnt", this.text(row.USAGE_CNT)],
+            ["passenger_type", this.text(row.PASSENGER_TYPE)],
+            ["route_code", this.text(row.ROUTE_CODE)],
+            ["host_passenger_type", this.text(row.HOST_PASSENGER_TYPE)],
+            ["card_type", this.text(row.CARD_TYPE)],
+        ];
+        // Java escaped nothing here, so a quote in a column would break the document there too.
+        return `<FARE ${pairs.map(([k, v]) => ` ${k} = "${v}"`).join("")} />`;
     }
 
     /**

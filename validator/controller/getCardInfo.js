@@ -1,8 +1,8 @@
 const { ValidatorControllerBase } = require("../ValidatorControllerBase");
 
-// Attribute order is the order Java added the nodes in, and devices read the document
-// positionally in places, so it is fixed here rather than left to object literal order.
-const EMPTY_CARD = { ALIAS_NO: "", REGISTERED: "", PASSENGER_TYPE: "", USAGE_CNT: "" };
+// Java built this with the DOM and its serialiser writes attributes in alphabetical order,
+// whatever order they were added in. Matching that keeps the document byte for byte the same.
+const EMPTY_CARD = { ALIAS_NO: "", PASSENGER_TYPE: "", REGISTERED: "", USAGE_CNT: "" };
 
 /**
  * One card looked up by number. Java answered 200 with a document either way: a missing card
@@ -21,7 +21,7 @@ class GetCardInfo extends ValidatorControllerBase {
             const attributes = await this.cardAttributes(req, cardNo);
 
             res.setHeader("Content-Type", "text/xml");
-            res.locals.data = this.js2Xml({ ROOT: { CARD: { _attributes: attributes } } },
+            res.locals.data = this.js2Xml({ ROOT: { CARD: { _attributes: this.sorted(attributes) } } },
                 { compact: true, ignoreComment: true, spaces: 0 });
         } catch (error) {
             // Only a failure to build the document reaches here; a failed query is reported
@@ -40,18 +40,25 @@ class GetCardInfo extends ValidatorControllerBase {
         } catch (error) {
             this.ULog.error(`getcardinfo query failed for card_no ${cardNo}: `
                 + `${error?.message}`, req.sessionId);
-            return { CARD_NO: cardNo, IS_SUCCEED: "0", ...EMPTY_CARD };
+            return { CARD_NO: this.text(cardNo), IS_SUCCEED: "0", ...EMPTY_CARD };
         }
-        if (!row) return { CARD_NO: cardNo, IS_SUCCEED: "1", ...EMPTY_CARD };
+        // Attr.setValue(null) serialises as an empty attribute in Java, so a request with no
+        // card_no still carries CARD_NO="" rather than dropping the attribute.
+        if (!row) return { CARD_NO: this.text(cardNo), IS_SUCCEED: "1", ...EMPTY_CARD };
 
         return {
+            ALIAS_NO: this.text(row.ALIAS_NO),
             CARD_NO: this.text(row.CARD_NO),
             IS_SUCCEED: "1",
-            ALIAS_NO: this.text(row.ALIAS_NO),
-            REGISTERED: this.text(row.REGISTERED),
             PASSENGER_TYPE: this.text(row.PASSENGER_TYPE),
+            REGISTERED: this.text(row.REGISTERED),
             USAGE_CNT: this.text(row.USAGE_CNT),
         };
+    }
+
+    /** The serialiser Java used sorts them, so the document is built sorted here. */
+    sorted(attributes) {
+        return Object.fromEntries(Object.entries(attributes).sort(([a], [b]) => a.localeCompare(b)));
     }
 
     /** Java read every column with getString, and a null column became an empty attribute. */
