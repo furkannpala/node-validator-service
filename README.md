@@ -126,8 +126,28 @@ kurup stdout'a yazıp UDP atıyor.
 CPU-bound değil, zamanın bir kısmını Oracle'ı beklemekle geçiriyor. Kazanç anlık verim
 değil, başlık.
 
-Yapısal tavan ayrı: **tek Node süreci = tek çekirdek**, Tomcat 12 çekirdeğe yayılıyor.
-En büyük kaldıraç birden fazla Node süreci çalıştırmak.
+**Yapısal tavan ve çözümü.** Tek Node süreci = tek çekirdek + tek havuz (10 bağlantı);
+Tomcat hem çekirdeklere yayılıyor hem tek havuzu paylaşıyor. Üç Node süreci önüne bir yük
+dengeleyici koyarak ölçüldüğünde tablo tersine dönüyor — havuzlar eşitlenerek (Java 30,
+Node 3×10):
+
+| Eşzamanlılık | Java (havuz 30) | Node ×1 (10) | Node ×3 (30) |
+|---:|---:|---:|---:|
+| 8 | 275 | 178 | 269 |
+| 16 | 270 | 113 *(3422 hata)* | **316** |
+| 24 | 200 | 57 *(5945 hata)* | **281** |
+
+Yani sorun Node değil, tek süreç. Üç süreçle Java'yı yakalıyor, yük artınca geçiyor.
+
+**Çok süreçli kurulumda `VS_AUTOSTART=0` şart.** Job katmanı her süreçte ayrı ayrı başlıyor:
+üç süreç çalıştırıldığında `configWatch`, `cacheCleanup`, `errorTdWatch`, `poolPressure`
+üçünde birden kayıtlı oldu. `errorTdWatch` aynı satırları üç kez raporlar,
+`requestLogRetention` açıksa üç süreç aynı anda siler. Doğru kurulum: **yalnız bir süreç
+job'ları çalıştırır**, diğerleri `VS_AUTOSTART=0` ile kalkar (doğrulandı: job sayısı 0,
+endpoint'ler normal çalışıyor).
+
+Her süreç kendi Oracle havuzunu açtığı için toplam bağlantı = süreç sayısı × `poolSize`;
+veritabanının `sessions` sınırı buna göre ayarlanmalı.
 
 **Pool eşiği — geçiş öncesi karar gerektiren madde.** `senddata`'da eşzamanlılık pool
 boyutunu (10) aştığında bu servis kuyruğa almak yerine `-99 getConnection Err` dönüyor:
