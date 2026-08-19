@@ -116,6 +116,19 @@ anlamlı olan şekil. Isınma şart: ısınmasız ölçüm JIT maliyetini Java'n
 Eşzamanlılık 8'de bu servis Java'nın **%65–98**'ini taşıyor (prosedür çağrısında %98,
 okumada %89, `senddata`'da %65).
 
+**CPU nereye gidiyor.** `senddata` profilinde çalışan CPU'nun **~%50'si log çıktısı**
+(ELK'e UDP %18, senkron stdout %16, mesaj kurma/temizleme gerisi), %16 oracledb thin
+sürücü, **%4 bu servisin kendi kodu**. `ULog`'da seviye filtresi yok: her çağrı mesajı
+kurup stdout'a yazıp UDP atıyor.
+
+`VS_SQL_DEBUG=0` ifade izini kapatır (maskeleme de hesaplanmaz) ve `senddata`'da
+**~%10** kazandırır — profilin ima ettiği %50 değil, çünkü süreç bu eşzamanlılıkta tam
+CPU-bound değil, zamanın bir kısmını Oracle'ı beklemekle geçiriyor. Kazanç anlık verim
+değil, başlık.
+
+Yapısal tavan ayrı: **tek Node süreci = tek çekirdek**, Tomcat 12 çekirdeğe yayılıyor.
+En büyük kaldıraç birden fazla Node süreci çalıştırmak.
+
 **Pool eşiği — geçiş öncesi karar gerektiren madde.** `senddata`'da eşzamanlılık pool
 boyutunu (10) aştığında bu servis kuyruğa almak yerine `-99 getConnection Err` dönüyor:
 12'de %2, 16'da isteklerin %78'i. Java'nın Tomcat pool'u 10 sn bekliyor ve hiç istek
