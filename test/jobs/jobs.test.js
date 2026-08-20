@@ -305,6 +305,40 @@ describe('kpgHealth', () => {
 });
 
 describe('JobManager', () => {
+    it('waits for the kkconfig pool and goes on the moment it appears', async () => {
+        const manager = new JobManager();
+        let polls = 0;
+        manager.deps = {
+            connectRetries: 3, retryDelayMs: 1000, poolPollMs: 1,
+            // initPools fills the map one alias at a time; kkconfig is not the first one.
+            getPools: async () => {
+                polls++;
+                return { oracle: polls < 3 ? { '017': {} } : { '017': {}, kkconfig: {} } };
+            },
+        };
+
+        const started = Date.now();
+        await manager.waitForConfigPool();
+        const waited = Date.now() - started;
+
+        assert.strictEqual(polls, 3, 'it kept looking until kkconfig showed up');
+        assert.ok(waited < 900, `returned on the poll, not on the retry delay (${waited}ms)`);
+    });
+
+    it('gives the pool the same budget the connect retries get, then moves on', async () => {
+        const manager = new JobManager();
+        manager.deps = {
+            connectRetries: 3, retryDelayMs: 10, poolPollMs: 1,
+            getPools: async () => ({ oracle: { '017': {} } }),   // kkconfig never arrives
+        };
+        const started = Date.now();
+        await manager.waitForConfigPool();
+        const waited = Date.now() - started;
+
+        // 3 x 10ms, and then the load below reports the real failure rather than hanging here.
+        assert.ok(waited >= 25 && waited < 400, `bounded by the retry budget (${waited}ms)`);
+    });
+
     it('retries a failing config load before giving up', async () => {
         const manager = new JobManager();
         manager.deps = { retryDelayMs: 0 };

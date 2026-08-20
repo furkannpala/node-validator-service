@@ -51,10 +51,6 @@ yeni bir klondan sonra uygulanmalıdır.
 "test_validator_service": "mocha ./webapps/node-validator-service/test --recursive --exit --reporter=./node_modules/mochawesome --reporter-options reportDir=webapps/node-validator-service/test-report,reportTitle=\"Validator Services Test Report\",reportPageTitle=\"Validator Service Test Report\",overwrite=true,enableCode=false"
 ```
 
-Metot 80 satır ve derinlik 4 limitleri bir lint kuralı ile zorlanmıyor; kod bunlara uyacak
-şekilde yazılıyor. Dosya boyutu için bir limit yok: controller'lar konuya göre gruplandığı
-için bazı dosyalar (`device.js`, `route.js`) 400 satırı aşıyor.
-
 `test/architecture.test.js` üç kuralı zorluyor: `require('oracledb')` veya SQL metni
 `validator/dao/` dışında görünemez; kayıtlı her `?func=` anahtarı küçük harftir ve tek bir
 grup tarafından sahiplenilir; kayıtlı her endpoint `func(req, res, next)` sözleşmesini

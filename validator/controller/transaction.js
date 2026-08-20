@@ -9,7 +9,6 @@ const DataTransaction = require("../../bean/DataTransaction");
 const DataStrategy = require("../../strategy/DataStrategy");
 const StationStrategy = require("../../strategy/StationStrategy");
 const TchewDataStrategy = require("../../strategy/TchewDataStrategy");
-const Context = require("../../strategy/Context");
 const XmlWalk = require("../../util/XmlWalk");
 const DatabaseError = require("../../util/DatabaseError");
 const HttpUtil = require("../../util/HttpUtil");
@@ -27,9 +26,10 @@ class SendData extends ValidatorControllerBase {
         this.mstBus = this.daoFactory.get("MstBusDaoImpl");
         this.errorTdDao = this.daoFactory.get("TblValidatorErrorTdDaoImpl");
         this.pkConfig = this.daoFactory.get("PkConfigDaoImpl");
-        this.dataContext = new Context(new DataStrategy());
-        this.stationContext = new Context(new StationStrategy());
-        this.tchewContext = new Context(new TchewDataStrategy());
+        // Stateless, so one instance of each is shared by every request.
+        this.dataStrategy = new DataStrategy();
+        this.stationStrategy = new StationStrategy();
+        this.tchewStrategy = new TchewDataStrategy();
     }
 
     async func(req, res, next) {
@@ -78,11 +78,11 @@ class SendData extends ValidatorControllerBase {
                 + `STATION_TYPE: ${cfg.stationType} (no record found)`);
         }
 
-        const context = await this.selectContext(req, cfg);
+        const strategy = await this.selectStrategy(req, cfg);
         const isStation = !this.Constant.BUS_STATION_TYPES.has(String(cfg.stationType));
         // Only ins_data gathered the credit card usages; the station and tchew paths did not,
         // and the strategies skip the step when there is nothing to gather them into.
-        if (context === this.dataContext) cfg.emvUsages = new EmvUsageBatch();
+        if (strategy === this.dataStrategy) cfg.emvUsages = new EmvUsageBatch();
         const trx = new DataTransaction();
         for (const element of elements) {
             if (element.name.toUpperCase() !== 'DATA') continue;
@@ -99,7 +99,7 @@ class SendData extends ValidatorControllerBase {
                 await this.produceKafka(req, 'senddata', trx.toKafkaPayload(isStation), trx.sam_id,
                     isStation ? 'Kakfka Error:' : 'Kafka Error:');   // Java's two spellings
             }
-            if (cfg.dbEnabled) await this.storeRecord(req, context, trx, cfg);
+            if (cfg.dbEnabled) await this.storeRecord(req, strategy, trx, cfg);
         }
 
         await this.sendEmvUsages(req, cfg);
@@ -133,11 +133,17 @@ class SendData extends ValidatorControllerBase {
     }
 
     /** One record, one transaction, so a bad record cannot roll back the good ones. */
-    async storeRecord(req, context, trx, cfg) {
+    async storeRecord(req, strategy, trx, cfg) {
         try {
             await this.withTransaction(req.dbConn,
-                () => context.execute(req.dbConn, trx, cfg, req.sessionId));
+                () => strategy.processTransaction(req.dbConn, trx, cfg, req.sessionId));
         } catch (error) {
+            // The only line that says which record of the body failed. process() turns whatever
+            // comes out of here into one ServiceError, and getServiceError passes a ServiceError
+            // through without logging it, so removing this loses the record identity for good --
+            // the reply the device gets carries no record_id and neither does the error row.
+            this.ULog.error(`error processing transaction record_id=${trx?.record_id} `
+                + `sam_id=${trx?.sam_id}: ${error?.stack || error?.message}`, req.sessionId);
             if (isUniqueViolation(error)) return;
             // The rollback has already happened, so the error record is written on its own and
             // survives it. Losing it would erase the only evidence of the bad record.
@@ -167,15 +173,15 @@ class SendData extends ValidatorControllerBase {
      * Station type 1 and 5 are buses. One system runs an older set of statements on them, and
      * everything else is a station.
      */
-    async selectContext(req, cfg) {
+    async selectStrategy(req, cfg) {
         if (!this.Constant.BUS_STATION_TYPES.has(String(cfg.stationType))) {
-            return this.stationContext;
+            return this.stationStrategy;
         }
         if (String(cfg.systemId) === '106') {
             const compCode = await this.mstBus.getCompCode(req.dbConn, cfg.busId, req.sessionId);
-            if (compCode !== 1) return this.tchewContext;
+            if (compCode !== 1) return this.tchewStrategy;
         }
-        return this.dataContext;
+        return this.dataStrategy;
     }
 
     senddataConfig(req, res) {

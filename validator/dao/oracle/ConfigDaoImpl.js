@@ -12,16 +12,29 @@ function table() {
 const KKCONFIG_ALIAS = "kkconfig";
 
 /**
- * The config table lives in one central place. A pool named 'kkconfig' is that place when it
- * exists; otherwise the first Oracle pool is used, which is only correct while every pool can
- * see the table.
+ * The config table lives in one central place, and the pool named 'kkconfig' is that place.
+ *
+ * There is deliberately no fallback to another pool. initPools fills the pool map one alias at
+ * a time and getPools() answers with whatever exists at that instant, so during startup "there
+ * is no kkconfig" and "kkconfig has not been created yet" look identical from here. Falling
+ * back would mean reading the config table through whichever pool happened to be created first
+ * — on this deployment '017' — and configuring the whole service from it without any error.
+ * Refusing costs a retry; guessing costs a service that runs on the wrong configuration.
  */
 async function resolveConfigAlias() {
-    const oracle = (await getPools())?.oracle || {};
-    if (oracle[KKCONFIG_ALIAS]) return KKCONFIG_ALIAS;
-    const first = Object.keys(oracle)[0];
-    if (!first) throw new Error("no oracle pool available for the config table");
-    return first;
+    return pickConfigAlias((await getPools())?.oracle || {});
+}
+
+/**
+ * Split out from the call above so the decision can be tested against a pool map that has
+ * other aliases in it: getPools is captured at load time and the test process has no pools of
+ * its own, so going through resolveConfigAlias would only ever exercise the empty map.
+ */
+function pickConfigAlias(oraclePools) {
+    if (oraclePools[KKCONFIG_ALIAS]) return KKCONFIG_ALIAS;
+    const others = Object.keys(oraclePools);
+    throw new Error(`no '${KKCONFIG_ALIAS}' oracle pool: the config table has no other home`
+        + `${others.length ? ` (pools up: ${others.join(", ")})` : ""}`);
 }
 
 // Every row, for the boot-time / admin load. A row whose CONFIG is not valid JSON is logged
@@ -50,4 +63,4 @@ async function getAllConfig() {
     return result;
 }
 
-module.exports = { getAllConfig, table, resolveConfigAlias };
+module.exports = { getAllConfig, table, resolveConfigAlias, pickConfigAlias };

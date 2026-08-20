@@ -1,5 +1,6 @@
 const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run, oracleError } = require('../fakeConn');
+const { ULog } = require('../../../../lib/utils');
 const sendData = require('../../validator/controller/transaction').funcs.senddata;
 
 const DATA_ATTRS = 'record_id="D0001" trans_seq_no="1" trans_flag="1" customer_flag="0"'
@@ -24,6 +25,28 @@ function conn(handler) {
 const request = (c, query) => makeReq(c, { busid: '34AA0001', stationtype: '1', ...query }, body());
 
 describe('senddata', () => {
+    /**
+     * The reply carries no record_id and neither does the error row, so this log line is the
+     * only thing that says which record of a body failed. It used to live in strategy/Context;
+     * a test guards it now that the class it sat in is gone.
+     */
+    it('names the failing record in the log', async () => {
+        const lines = [];
+        const realError = ULog.error;
+        ULog.error = (message) => lines.push(String(message));
+        try {
+            const c = conn((sql) => (sql.includes('INSERT INTO afc_td(')
+                ? oracleError(942) : undefined));
+            await run(sendData, request(c), makeRes());
+        } finally {
+            ULog.error = realError;
+        }
+
+        const named = lines.filter((l) => l.includes('record_id=D0001') && l.includes('sam_id=05100001'));
+        assert.strictEqual(named.length, 1,
+            `expected the record to be named once, got: ${JSON.stringify(lines)}`);
+    });
+
     it('checks mst_bus before touching anything else', async () => {
         const c = conn();
         const err = await run(sendData, request(c), makeRes());

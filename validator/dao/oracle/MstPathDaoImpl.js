@@ -1,5 +1,4 @@
 const BaseDao = require("../BaseDao");
-const { debugSql } = require("../sqlLog");
 
 // One query behind two tables of the route .db file: every row becomes a MST_PATH row and a
 // TMS_ROUTE_PATH row. Java bound the same date into all three date ranges, so one named bind
@@ -18,7 +17,7 @@ class MstPathDaoImpl extends BaseDao {
 
     async getPaths(conn, opdate, sessionId) {
         const binds = { opdate };
-        debugSql(this.getPathsSql, binds, sessionId);
+        this.debugSql(this.getPathsSql, binds, sessionId);
         const result = await conn.execute(this.getPathsSql, binds, {
             outFormat: this.oracledb.OUT_FORMAT_OBJECT,
             fetchArraySize: 2000,

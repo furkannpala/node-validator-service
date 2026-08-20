@@ -1,6 +1,5 @@
 const assert = require('assert');
 const FRecordStrategy = require('../../strategy/FRecordStrategy');
-const Context = require('../../strategy/Context');
 const { fakeConn } = require('../fakeConn');
 
 /** Records which visitor methods ran, in order, without touching a database. */
@@ -78,25 +77,5 @@ describe('F record strategy', () => {
             const { trx } = await planFor('0', { old_amt: null });
             assert.strictEqual(trx.pathCode, '');
         });
-    });
-});
-
-describe('strategy Context', () => {
-    it('runs the strategy it was given', async () => {
-        const seen = [];
-        const context = new Context({ processTransaction: async (c, trx) => seen.push(trx.record_id) });
-        await context.execute(fakeConn(), { record_id: 'F001' }, {}, 'test');
-        assert.deepStrictEqual(seen, ['F001']);
-    });
-
-    it('rethrows so the record can be rolled back and logged', async () => {
-        const context = new Context({
-            processTransaction: async () => { throw new Error('boom'); },
-        });
-        await assert.rejects(() => context.execute(fakeConn(), { record_id: 'F002' }, {}, 'test'), /boom/);
-    });
-
-    it('does nothing when no strategy was selected', async () => {
-        await new Context(null).execute(fakeConn(), {}, {}, 'test');
     });
 });

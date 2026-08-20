@@ -1,5 +1,4 @@
 const BaseDao = require("../BaseDao");
-const { debugSql } = require("../sqlLog");
 
 // SQL carried over verbatim, Oracle (+) outer joins included. Java returned null for an empty
 // result set; here an empty array serves the same purpose and the controller checks length.
@@ -42,7 +41,7 @@ class DailyBusRouteDaoImpl extends BaseDao {
         + "AND b.COMP_CODE = (SELECT COMP_CODE FROM MST_BUS WHERE BUS_ID = :busid AND TRUNC(SYSDATE) BETWEEN VALIDITY_START_DATE AND VALIDITY_END_DATE)";
 
     async query(conn, sql, binds, sessionId) {
-        debugSql(sql, binds, sessionId);
+        this.debugSql(sql, binds, sessionId);
         const result = await conn.execute(sql, binds, { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return result.rows || [];
     }

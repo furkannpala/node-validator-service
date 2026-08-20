@@ -9,6 +9,10 @@ const { bindJobs, stopJobs } = require("./index");
 
 const CONNECT_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
+// How often the pool map is checked while initPools is still filling it.
+const POOL_POLL_MS = 50;
+// The config table has no home but this pool; see ConfigDaoImpl.resolveConfigAlias.
+const KKCONFIG_ALIAS = "kkconfig";
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,6 +47,32 @@ class JobManager {
     }
 
     /**
+     * server.js requires the webapps at module load and only awaits initPools afterwards, so the
+     * autostart in index.js runs while the pool map is still filling — the first attempt lands
+     * before 'kkconfig' exists and fails for a reason that will fix itself in a moment.
+     *
+     * Polling returns the instant the pool appears, so the common case costs one tick rather
+     * than a retry delay. The budget is the one the connect retries already get: a second
+     * timeout to keep in sync would be a second thing to get wrong, and a pool that never
+     * appears is the same failure the retry loop below reports.
+     */
+    async waitForConfigPool() {
+        const getPools = this.deps?.getPools;
+        if (typeof getPools !== "function") return;
+
+        const budgetMs = (this.deps?.connectRetries ?? CONNECT_RETRIES)
+            * (this.deps?.retryDelayMs ?? RETRY_DELAY_MS);
+        const pollMs = this.deps?.poolPollMs ?? POOL_POLL_MS;
+        const deadline = Date.now() + budgetMs;
+
+        while (Date.now() < deadline) {
+            if ((await getPools())?.oracle?.[KKCONFIG_ALIAS]) return;
+            await sleep(pollMs);
+        }
+        ULog.debug(`'${KKCONFIG_ALIAS}' pool still absent after ${budgetMs}ms; loading anyway`);
+    }
+
+    /**
      * Retried, unlike the request path: at startup Oracle may still be coming up, and a single
      * failed attempt would leave the service running with no configuration at all.
      */
@@ -50,6 +80,7 @@ class JobManager {
         // Injectable so a test does not have to sit through the real backoff.
         const retries = this.deps?.connectRetries ?? CONNECT_RETRIES;
         const retryDelay = this.deps?.retryDelayMs ?? RETRY_DELAY_MS;
+        await this.waitForConfigPool();
         let lastError = null;
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {

@@ -1,5 +1,4 @@
 const BaseDao = require("../BaseDao");
-const { debugSql } = require("../sqlLog");
 
 // SQL text carried over from the Java service unchanged; only the positional `?` binds became
 // named ones. Parameter order is the procedure signature and must not be "tidied".
@@ -51,7 +50,7 @@ class PkAppValDaoImpl extends BaseDao {
     getSystemPdateSql = ' SELECT PK_APP_VAL.fn_get_system_pdate(:type) AS PDATE FROM dual ';
 
     async setValStatus(conn, data, sessionId) {
-        debugSql(this.setValStatusSql, data, sessionId);
+        this.debugSql(this.setValStatusSql, data, sessionId);
         return await conn.execute(this.setValStatusSql, data);
     }
 
@@ -64,7 +63,7 @@ class PkAppValDaoImpl extends BaseDao {
         data.lobtype = { dir: this.oracledb.BIND_OUT, type: this.oracledb.STRING };
         data.content_clob = { dir: this.oracledb.BIND_OUT, type: this.oracledb.CLOB };
         data.content_blob = { dir: this.oracledb.BIND_OUT, type: this.oracledb.BLOB };
-        debugSql(this.getCfgFileSql, data, sessionId);
+        this.debugSql(this.getCfgFileSql, data, sessionId);
 
         const result = await conn.execute(this.getCfgFileSql, data);
         const out = result.outBinds;
@@ -77,7 +76,7 @@ class PkAppValDaoImpl extends BaseDao {
         data.lobtype = { dir: this.oracledb.BIND_OUT, type: this.oracledb.STRING };
         data.content_clob = { dir: this.oracledb.BIND_OUT, type: this.oracledb.CLOB };
         data.content_blob = { dir: this.oracledb.BIND_OUT, type: this.oracledb.BLOB };
-        debugSql(this.getFileFromPathSql, data, sessionId);
+        this.debugSql(this.getFileFromPathSql, data, sessionId);
 
         const result = await conn.execute(this.getFileFromPathSql, data);
         const out = result.outBinds;
@@ -89,7 +88,7 @@ class PkAppValDaoImpl extends BaseDao {
     /** Returns a route count, not a LOB; Java threw when it came back <= 0. */
     async getBusRouteList(conn, data, sessionId) {
         data.routecnt = { dir: this.oracledb.BIND_OUT, type: this.oracledb.NUMBER };
-        debugSql(this.getBusRouteListSql, data, sessionId);
+        this.debugSql(this.getBusRouteListSql, data, sessionId);
         const result = await conn.execute(this.getBusRouteListSql, data);
         return result.outBinds.routecnt;
     }
@@ -97,7 +96,7 @@ class PkAppValDaoImpl extends BaseDao {
     /** The procedure reports its own failure in an OUT code; a non-zero value is the error. */
     async setDriverPassword(conn, data, sessionId) {
         data.retval = { dir: this.oracledb.BIND_OUT, type: this.oracledb.NUMBER };
-        debugSql(this.setDriverPasswordSql, data, sessionId);
+        this.debugSql(this.setDriverPasswordSql, data, sessionId);
         const result = await conn.execute(this.setDriverPasswordSql, data);
         return result.outBinds.retval;
     }
@@ -110,7 +109,7 @@ class PkAppValDaoImpl extends BaseDao {
     async alarmTakeConfirmation(conn, data, sessionId) {
         data.message = { dir: this.oracledb.BIND_OUT, type: this.oracledb.STRING };
         data.messageid = { dir: this.oracledb.BIND_OUT, type: this.oracledb.NUMBER };
-        debugSql(this.alarmTakeConfirmationSql, data, sessionId);
+        this.debugSql(this.alarmTakeConfirmationSql, data, sessionId);
         const result = await conn.execute(this.alarmTakeConfirmationSql, data);
         return { message: result.outBinds.message, messageId: result.outBinds.messageid };
     }
@@ -120,7 +119,7 @@ class PkAppValDaoImpl extends BaseDao {
     }
 
     async getSystemPdate(conn, data, sessionId) {
-        debugSql(this.getSystemPdateSql, data, sessionId);
+        this.debugSql(this.getSystemPdateSql, data, sessionId);
         const result = await conn.execute(this.getSystemPdateSql, data,
             { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return result.rows[0]?.PDATE;

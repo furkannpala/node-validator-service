@@ -1,5 +1,4 @@
 const BaseDao = require("../BaseDao");
-const { debugSql } = require("../sqlLog");
 
 // The fare side of AFC_TD: the host asks for the taps it has not priced yet, prices them
 // elsewhere and sends the amounts back.
@@ -29,7 +28,7 @@ class AfcTdFareDaoImpl extends BaseDao {
         + 'and usage_cnt=:usage_cnt';
 
     async getUncalculated(conn, sessionId) {
-        debugSql(this.getUncalculatedSql, undefined, sessionId);
+        this.debugSql(this.getUncalculatedSql, undefined, sessionId);
         const result = await conn.execute(this.getUncalculatedSql, [],
             { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
         return result.rows || [];

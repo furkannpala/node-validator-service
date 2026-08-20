@@ -1,5 +1,4 @@
 const BaseDao = require("../BaseDao");
-const { debugSql } = require("../sqlLog");
 
 const COLS = 'bus_id,route_code,bus_stop_id,half_progress_type,arrival_date_time,leaving_date_time,'
     + 'travel_type,travel_seq_no,start_date_time,sam_id,pdate';
@@ -99,7 +98,7 @@ class TmsValRouteDaoImpl extends BaseDao {
             bus_id: trx.bus_id,
             leaving_date_time: trx.boarding_date_time,
         };
-        debugSql(this.checkLeavingDateTimeSql, binds, sessionId);
+        this.debugSql(this.checkLeavingDateTimeSql, binds, sessionId);
         const result = await conn.execute(this.checkLeavingDateTimeSql, binds, { autoCommit: false });
         return (result.rows || []).length > 0;
     }

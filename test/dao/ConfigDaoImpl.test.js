@@ -12,6 +12,24 @@ describe('ConfigDaoImpl', () => {
     const original = system_cfg.kk_config_scheme;
     afterEach(() => { system_cfg.kk_config_scheme = original; });
 
+    it('reads the config table through kkconfig', () => {
+        assert.strictEqual(configDaoImpl.pickConfigAlias({ '017': {}, kkconfig: {} }), 'kkconfig');
+    });
+
+    /**
+     * The window this closes: initPools creates '017' first and 'kkconfig' second, so a caller
+     * that arrives in between used to be handed '017' and configured the whole service from
+     * whatever that pool's user could see, with no error anywhere.
+     */
+    it('refuses another pool rather than guessing while kkconfig is still coming up', () => {
+        assert.throws(() => configDaoImpl.pickConfigAlias({ '017': {} }),
+            /no 'kkconfig' oracle pool.*pools up: 017/);
+    });
+
+    it('says so plainly when no pool is up at all', () => {
+        assert.throws(() => configDaoImpl.pickConfigAlias({}), /no 'kkconfig' oracle pool/);
+    });
+
     it('applies kk_config_scheme at call time', () => {
         system_cfg.kk_config_scheme = '';
         assert.strictEqual(configDaoImpl.table(), 'VALIDATOR_SERVICE_CONFIG');

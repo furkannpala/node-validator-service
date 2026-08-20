@@ -1,5 +1,4 @@
 const BaseDao = require("../BaseDao");
-const { debugSql } = require("../sqlLog");
 
 /**
  * The stop sequence of every path in the route .db file. The two offsets are selected twice:
@@ -21,7 +20,7 @@ class TmsPathBusStopDaoImpl extends BaseDao {
 
     async getPathStops(conn, opdate, sessionId) {
         const binds = { opdate };
-        debugSql(this.getPathStopsSql, binds, sessionId);
+        this.debugSql(this.getPathStopsSql, binds, sessionId);
         const result = await conn.execute(this.getPathStopsSql, binds, {
             outFormat: this.oracledb.OUT_FORMAT_OBJECT,
             fetchArraySize: 2000,

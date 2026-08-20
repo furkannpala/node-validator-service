@@ -1,6 +1,5 @@
 const oracledb = require("oracledb");
 const { ULog } = require("../../../../lib/utils");
-const { maskJson } = require("../../util/LogMask");
 const { TX } = require("./daoUtil");
 const Constant = require("../../constant/Constant");
 const { debugSql } = require("./sqlLog");
@@ -8,7 +7,15 @@ const { debugSql } = require("./sqlLog");
 class BaseDao {
     ULog = ULog;
     oracledb = oracledb;
-    maskJson = maskJson;
+
+    /**
+     * The statement trace, so a DAO does not have to know sqlLog exists. It stays a module of
+     * its own because the sqlite DAOs share it, and they do not extend this class: they talk to
+     * node:sqlite synchronously and none of what is below means anything to them.
+     */
+    debugSql(sql, binds, sessionId) {
+        debugSql(sql, binds, sessionId);
+    }
 
     /**
      * Every write statement in the service has the same shape. autoCommit stays off so the
