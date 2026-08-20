@@ -18,7 +18,7 @@ function maxAgeMs(manager) {
  * or by hand, so a file for a version nobody asks for any more stayed on disk indefinitely.
  */
 async function run(manager, cache = FileCacheManager) {
-    const removed = cache.removeExpired(maxAgeMs(manager));
+    const removed = await cache.removeExpired(maxAgeMs(manager));
     if (removed > 0) ULog.info(`cacheCleanup: ${removed} expired cache file(s) removed`);
     return removed;
 }

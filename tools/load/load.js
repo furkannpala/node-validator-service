@@ -87,11 +87,14 @@ async function measure(base, options, scenario) {
         () => worker(base, options, scenario, state, deadline)));
     const elapsed = (Date.now() - started) / 1000;
 
-    // A write scenario can answer 200 while writing nothing: senddata files a bad record and
-    // reports OK. Without this check the run happily measures the error path.
-    const wrong = scenario.verify ? scenario.verify() : null;
-
     const samples = batches.flat();
+
+    // A write scenario can answer 200 while writing nothing: senddata files a bad record and
+    // reports OK. Without this check the run happily measures the error path. The measured
+    // request count goes in so the check can also catch records swallowed as duplicates,
+    // which leave a row behind and would otherwise pass.
+    const wrong = scenario.verify ? scenario.verify(samples.length) : null;
+
     const latencies = samples.map((s) => s.ms).sort((a, b) => a - b);
     const failed = samples.filter((s) => !s.ok);
 
@@ -208,6 +211,10 @@ async function runMatrix(options) {
         rows.push({ ...entry, java, node });
         console.log(`java ${round(java.rps)} / node ${round(node.rps)} ist/sn`
             + `  (node hata ${node.failed})`);
+        // The report carries this too, but a matrix is watched on screen and a poisoned run
+        // looks perfectly healthy there: rps and error count both stay normal.
+        if (java.wrong) console.log(`  [OLCUM GECERSIZ - java] ${java.wrong}`);
+        if (node.wrong) console.log(`  [OLCUM GECERSIZ - node] ${node.wrong}`);
     }
     writeMatrixReport(options, rows);
     console.log(`

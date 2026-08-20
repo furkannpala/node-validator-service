@@ -91,15 +91,17 @@ describe('FileCacheManager store/read', () => {
         try { fs.rmSync(FileCacheManager.filePath(fileName, 'getroute'), { force: true }); } catch (e) { /* best effort */ }
     });
 
-    it('round-trips content and answers URI with the path', () => {
-        FileCacheManager.store('getroute', fileName, '<ROOT/>');
-        assert.strictEqual(FileCacheManager.read(fileName, 'getroute').toString(), '<ROOT/>');
+    it('round-trips content and answers URI with the path', async () => {
+        await FileCacheManager.store('getroute', fileName, '<ROOT/>');
+        assert.strictEqual((await FileCacheManager.read(fileName, 'getroute')).toString(), '<ROOT/>');
 
-        const uri = FileCacheManager.read(fileName, 'getroute', 'URI').toString();
+        const uri = (await FileCacheManager.read(fileName, 'getroute', 'URI')).toString();
         assert.ok(uri.endsWith(path.join('ROUTE', fileName)), uri);
     });
 
-    it('returns null for a file that is not there', () => {
-        assert.strictEqual(FileCacheManager.read('missing_file', 'getroute'), null);
+    it('returns null for a file that is not there', async () => {
+        assert.strictEqual(await FileCacheManager.read('missing_file', 'getroute'), null);
+        // URI answers null too rather than a path to something that is not on disk.
+        assert.strictEqual(await FileCacheManager.read('missing_file', 'getroute', 'URI'), null);
     });
 });

@@ -3,7 +3,7 @@ const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run } = require('../fakeConn');
 const HttpUtil = require('../../util/HttpUtil');
 const { readResponse, EmvUsageBatch } = require('../../util/EmvUsageBatch');
-const sendData = require('../../validator/controller/sendData');
+const sendData = require('../../validator/controller/transaction').funcs.senddata;
 
 // key_index 2 means the device did not price the ride, which is what puts it in the batch.
 const DATA_ATTRS = 'record_id="D0001" trans_seq_no="1" trans_flag="1" customer_flag="0"'

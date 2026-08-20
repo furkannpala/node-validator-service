@@ -159,14 +159,31 @@ function usesSetFloat(table, options) {
     return table === 'afc_td' ? !!options.originSystemId : !!options.extendedFare;
 }
 
-function bindFor(table, trx, options = {}) {
-    // Only the binds the chosen variant references: an extra one is ORA-01036 on some drivers.
-    const text = columnsFor(table, options).map((p) => p[1]).join(',');
-    const referenced = new Set(text.match(/:[a-z_]\w*/gi) || []);
-    const binds = {};
-    for (const [name, value] of Object.entries(tdBind(trx))) {
-        if (referenced.has(':' + name)) binds[name] = value;
+/**
+ * Which of tdBind's names the chosen variant actually references. It is a property of the
+ * variant, not of the record, so it is worked out once per (table, options) and kept — the
+ * statement itself is cached the same way in the DAOs. Recomputing it per record cost about a
+ * third of bindFor, on the busiest loop in the service.
+ */
+const referencedCache = new Map();
+
+function referencedNames(table, options) {
+    const key = `${table}|${JSON.stringify(options)}`;
+    let names = referencedCache.get(key);
+    if (!names) {
+        const text = columnsFor(table, options).map((p) => p[1]).join(',');
+        const referenced = new Set(text.match(/:[a-z_]\w*/gi) || []);
+        // Only the binds the chosen variant references: an extra one is ORA-01036 on some drivers.
+        names = Object.keys(tdBind({})).filter((name) => referenced.has(':' + name));
+        referencedCache.set(key, names);
     }
+    return names;
+}
+
+function bindFor(table, trx, options = {}) {
+    const values = tdBind(trx);
+    const binds = {};
+    for (const name of referencedNames(table, options)) binds[name] = values[name];
     const spec = TABLES[table];
     if (spec.tail.includes('TRANSFER_REF_CODE')) binds.transfer_ref_code = trx.transfer_ref_code;
     // An option the table does not allow is ignored here too, or the bind set would not match
@@ -176,7 +193,9 @@ function bindFor(table, trx, options = {}) {
     if (on('originSystemId')) binds.origin_system_id = trx.originSystemId;
     if (on('qrData')) binds.qr_data = trx.qr_data;
     // The short tables stop before LAT and LNG, so there is nothing to convert there.
-    if (referenced.has(':lat') && usesSetFloat(table, options)) {
+    // 'in', not a truth test: the key is present exactly when the variant references :lat, and
+    // the value itself is legitimately null on the station path.
+    if ('lat' in binds && usesSetFloat(table, options)) {
         binds.lat = StringUtil.toJavaFloat(trx.lat);
         binds.lng = StringUtil.toJavaFloat(trx.lng);
     }

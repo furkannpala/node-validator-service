@@ -1,6 +1,9 @@
 const db = require('../compare/db');
 const { BUS, SAM } = require('../compare/writeCases');
 
+/** The card every senddata ticket of a run is written for; reset() has to clear it by name. */
+const CARD = '01712340000001';
+
 /**
  * What the load runner drives. `build` returns a fetch request; `sequence` is unique per
  * request so a write scenario is not measuring how fast Oracle rejects a duplicate key.
@@ -51,9 +54,15 @@ const SCENARIOS = {
             // travel_seq_no moves with the sequence too, or every ticket would hang off one
             // trip row and the run would measure lock contention on it.
             const seq = SCENARIOS.senddata.sequenceOf(sequence);
+            // AFC_TD_UN_INNDX is unique on (CARD_NO, BOARDING_DATE_TIME, USAGE_CNT). Moving
+            // trans_seq_no alone leaves all three fixed, so only the first ticket of a run went
+            // in and every later one hit ORA-00001 — which AfcTdDaoImpl swallows and the
+            // endpoint still answers OK. The run then measured how fast Oracle rejects a
+            // duplicate, not how fast a ticket is written. usage_cnt is NUMBER(8,0), wide
+            // enough for the sequence, and reads as the nth tap of the card.
             const attrs = 'record_id="D0001" trans_flag="1" customer_flag="0" data_save_flag="0"'
                 + ' station_type="1" transmit_cnt="1" bus_stop_code="45" alias_no="A1"'
-                + ' card_no="01712340000001" date_time="20260819100000" usage_cnt="3"'
+                + ` card_no="${CARD}" date_time="20260819100000" usage_cnt="${seq}"`
                 + ' passenger_type="1" usage_amt="250" remained_amt="1000" stage="1"'
                 + ' customer_cnt="1" dc_rate="0" old_route_code="0" approval_no="0" tc_code="0"'
                 + ' rtc_code="0" ht_start_time="20260819080000" old_amount="1250"'
@@ -82,13 +91,28 @@ const SCENARIOS = {
                     ? `bus_id='${BUS}'` : `sam_id='${SAM}'`;
                 db.execute(`DELETE FROM ${table} WHERE ${where};`);
             }
+            // A ticket sent by hand with another sam_id still occupies the unique index for this
+            // card, and every later ticket of the run would be a duplicate. Clearing by sam_id
+            // alone does not reach those rows.
+            db.execute(`DELETE FROM afc_td WHERE card_no='${CARD}';`);
         },
-        /** A ticket has to land and no error row with it, or the run is timing a failure. */
-        verify: () => {
+        /**
+         * A ticket has to land and no error row with it, or the run is timing a failure. The
+         * row count matters as much as its presence: one stored ticket and ten thousand
+         * duplicates also leaves afc_td non-empty, and that is the shape this scenario had
+         * before usage_cnt moved with the sequence.
+         */
+        verify: (requests) => {
             const tickets = db.rows('afc_td', `sam_id='${SAM}'`).length;
             const errors = db.rows('tbl_validator_error_td', `bus_id='${BUS}'`).length;
             if (tickets === 0) return 'afc_td satırı yazılmadı';
             if (errors > 0) return `TBL_VALIDATOR_ERROR_TD'ye ${errors} satır düştü`;
+            // Warmup requests are written too, so the stored count is never below the measured
+            // count in a healthy run; well below it means records were swallowed as duplicates.
+            if (requests && tickets < requests * 0.9) {
+                return `${requests} istek yazıldı ama afc_td'de ${tickets} satır var`
+                    + ' — kayıtlar yinelenen olarak yutuldu, ölçüm yazma yolunu ölçmüyor';
+            }
             return null;
         },
         cleanup: () => SCENARIOS.senddata.reset(),

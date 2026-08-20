@@ -1,16 +1,16 @@
 const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run, oracleError } = require('../fakeConn');
 
-const sendCfg = require('../../validator/controller/sendCfg');
-const sendLog = require('../../validator/controller/sendLog');
-const sendGps = require('../../validator/controller/sendGps');
-const sendCan = require('../../validator/controller/sendCan');
-const sendAlarm = require('../../validator/controller/sendAlarm');
-const onlineGps = require('../../validator/controller/onlineGps');
-const wlanStatus = require('../../validator/controller/wlanStatus');
-const readMessage = require('../../validator/controller/readMessage');
-const setDriverPassword = require('../../validator/controller/setDriverPassword');
-const verifyDriver = require('../../validator/controller/verifyDriver');
+const sendCfg = require('../../validator/controller/device').funcs.sendcfg;
+const sendLog = require('../../validator/controller/device').funcs.sendlog;
+const sendGps = require('../../validator/controller/gps').funcs.sendgps;
+const sendCan = require('../../validator/controller/device').funcs.sendcan;
+const sendAlarm = require('../../validator/controller/device').funcs.sendalarm;
+const onlineGps = require('../../validator/controller/gps').funcs.onlinegps;
+const wlanStatus = require('../../validator/controller/device').funcs.wlanstatus;
+const readMessage = require('../../validator/controller/message').funcs.readmessage;
+const setDriverPassword = require('../../validator/controller/driver').funcs.setdriverpassword;
+const verifyDriver = require('../../validator/controller/driver').funcs.verifydriver;
 
 const CFG_BODY = '<ROOT><VALAPPCONF bus_id="34AA0001" sam_id="05100001" pcb_id="ab12cd"'
     + ' temperature="30.5" input_voltage="12.10" battery_voltage="3.70" station_type="1"/></ROOT>';

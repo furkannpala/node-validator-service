@@ -2,10 +2,10 @@
 const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run, oracleError } = require('../fakeConn');
 
-const getTripType = require('../../validator/controller/getTripType');
-const getDriverPassword = require('../../validator/controller/getDriverPassword');
-const getCardDetail = require('../../validator/controller/getCardDetail');
-const getBusInfo = require('../../validator/controller/getBusInfo');
+const getTripType = require('../../validator/controller/schedule').funcs.gettriptype;
+const getDriverPassword = require('../../validator/controller/driver').funcs.getdriverpassword;
+const getCardDetail = require('../../validator/controller/card').funcs.getcarddetail;
+const getBusInfo = require('../../validator/controller/bus').funcs.getbusinfo;
 
 /** Fails every statement except the validator status call, which every endpoint makes first. */
 function failingConn(error) {
@@ -64,7 +64,7 @@ describe('database error masking', () => {
     });
 
     it('answers getroutebusstop with the bare exception text, as its own Java catch did', async () => {
-        const getRouteBusStop = require('../../validator/controller/getRouteBusStop');
+        const getRouteBusStop = require('../../validator/controller/route').funcs.getroutebusstop;
         const conn = fakeConn();
         const res = makeRes();
         // Integer.parseInt(null) carries the message "null", and Java sent it as the whole

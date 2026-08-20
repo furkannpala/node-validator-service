@@ -9,15 +9,36 @@ const FileCacheManager = require("../util/FileCacheManager");
 
 const controller = {};
 
-// The lowercased file name becomes the ?func= key, so the file name is the contract.
-// This replaces the 130-branch if/else chain of Java Services.doProcess.
+/**
+ * The ?func= key is what a module registers, not where it lives. Endpoints are grouped by
+ * subject — every card function in card.js, every route function in route.js — and each group
+ * exports a `funcs` table whose keys are the ?func= values it answers.
+ *
+ * This replaces the 130-branch if/else chain of Java Services.doProcess. A file that exports a
+ * controller directly still registers under its own lowercased name, so a single endpoint that
+ * belongs in no group can stay a file of its own.
+ */
 const loadControllers = (directory) => {
     if (!fs.existsSync(directory)) return;
     for (const element of fs.readdirSync(directory)) {
         const absolute = path.join(directory, element);
         if (fs.statSync(absolute).isDirectory()) continue;
         if (path.extname(element) !== ".js") continue;
-        controller[path.parse(element).name.toLocaleLowerCase("en-US")] = require(absolute);
+
+        const loaded = require(absolute);
+        if (!loaded?.funcs) {
+            controller[path.parse(element).name.toLocaleLowerCase("en-US")] = loaded;
+            continue;
+        }
+        for (const [name, impl] of Object.entries(loaded.funcs)) {
+            const key = name.toLocaleLowerCase("en-US");
+            // Two groups claiming the same key would silently shadow one endpoint with another,
+            // and the loser would only be noticed by the device that stopped getting answers.
+            if (Object.prototype.hasOwnProperty.call(controller, key)) {
+                throw new Error(`duplicate ?func= key '${key}' registered by ${element}`);
+            }
+            controller[key] = impl;
+        }
     }
 };
 loadControllers(`${__dirname}/controller`);
@@ -83,12 +104,37 @@ function isKafkaOnly(cfg, func) {
     return !!value;
 }
 
-/** The functions listed in save_request_log_functions keep a copy of every request body. */
-function savesRequestLog(cfg, func) {
-    const configured = configValue(cfg, "save_request_log_functions");
-    const list = Array.isArray(configured)
-        ? configured : String(configured ?? "").split(",");
-    return list.map((f) => String(f).trim().toLowerCase()).includes(func) && !isKafkaOnly(cfg, func);
+/**
+ * configFor copies the whole system row and savesRequestLog re-splits a comma list; both used
+ * to run on every request for a result that only changes when the config does. The derived
+ * view is built once per system and thrown away when system_cfg.revision moves, which
+ * setCfgs bumps — the configWatch job and ?func=reloadconfig are the only writers.
+ *
+ * req.cfg is shared between requests from here on. Nothing writes to it: the controllers read
+ * it through ValidatorControllerBase.cfg() and never assign.
+ */
+const derived = new Map();   // systemId -> { cfg, requestLogFuncs }
+let derivedRevision = -1;
+
+function derivedFor(systemId) {
+    if (derivedRevision !== system_cfg.revision) {
+        derived.clear();
+        derivedRevision = system_cfg.revision;
+    }
+    const key = String(systemId);
+    let view = derived.get(key);
+    if (!view) {
+        const cfg = configFor(systemId);
+        const configured = configValue(cfg, "save_request_log_functions");
+        const list = Array.isArray(configured) ? configured : String(configured ?? "").split(",");
+        view = {
+            cfg,
+            requestLogFuncs: new Set(list.map((f) => String(f).trim().toLowerCase())
+                .filter((f) => f !== "" && !isKafkaOnly(cfg, f))),
+        };
+        derived.set(key, view);
+    }
+    return view;
 }
 
 /** Walks the compact xml-js tree and returns the code of the first ERROR element. */
@@ -107,13 +153,25 @@ function firstErrorCode(node) {
 }
 
 /**
+ * An <ERROR> element cannot be present without these bytes, so a document that does not carry
+ * them needs no parse at all. That matters: xml2Json goes through xml2json + JSON.parse, which
+ * is two full conversions of a payload that reaches several MB here — measured at 73 ms of
+ * blocked event loop for an 800 KB card list, against roughly nothing for this test.
+ */
+const ERROR_ELEMENT = /<ERROR[\s/>]/i;
+
+/**
  * An error document must never be cached and must not reach the device as a payload.
  * Content that is not XML at all (sound files) parses badly and is stored as-is, as in Java.
  */
 function assertNoErrorPayload(data) {
+    if (data == null) return;
+    const text = Buffer.isBuffer(data) ? data.toString("utf-8") : String(data);
+    if (!ERROR_ELEMENT.test(text)) return;
+
     let parsed;
     try {
-        parsed = xml2Json(data);
+        parsed = xml2Json(text);
     } catch (e) {
         return;
     }
@@ -132,23 +190,31 @@ function sendCached(res, func, content) {
 /**
  * Runs the controller, then validates and stores its payload before the response goes out.
  * The controller always calls next() exactly once, so wrapping it is the only hook available.
+ *
+ * The marker is released in every outcome, the successful one included. Leaving it behind used
+ * to grow the map for the life of the process and, once the file was swept by the cleanup job
+ * or by ?func=cleancachefiles, answered the next two minutes of callers with -20095 for a
+ * build that had finished long ago.
  */
 async function runAndCache(req, res, next, func, key) {
     FileCacheManager.startDownload(key.fileName);
-    await controller[func].func(req, res, (err) => {
-        if (err) {
-            FileCacheManager.clearDownload(key.fileName);
-            return next(err);
-        }
+    try {
+        let controllerError;
+        await controller[func].func(req, res, (err) => { controllerError = err; });
+        if (controllerError) return next(controllerError);
+
+        // An error document is a normal answer here, not a failure of ours: it is reported to
+        // the device and kept out of the cache without going through the -99 catch below.
         try {
             assertNoErrorPayload(res.locals.data);
         } catch (e) {
-            FileCacheManager.clearDownload(key.fileName);
             return next(e);
         }
-        FileCacheManager.store(func, key.fileName, res.locals.data);
+        await FileCacheManager.store(func, key.fileName, res.locals.data);
         next();
-    });
+    } finally {
+        FileCacheManager.clearDownload(key.fileName);
+    }
 }
 
 module.exports = {
@@ -166,11 +232,12 @@ module.exports = {
             if (!Object.prototype.hasOwnProperty.call(controller, func)) {
                 return next(new ServiceError(-9, "unrecognized func " + func));
             }
-            req.cfg = configFor(res.locals.systemId);
+            const view = derivedFor(res.locals.systemId);
+            req.cfg = view.cfg;
             // Java carried the id on SystemConfig; the kafka producer cache is keyed by it.
             req.systemId = res.locals.systemId;
 
-            if (savesRequestLog(req.cfg, func)) {
+            if (view.requestLogFuncs.has(func)) {
                 await requestLogDaoImpl.insert(req.dbConn, {
                     bus_id: req.query.busid ?? null,
                     sam_id: req.query.samid ?? null,
@@ -183,9 +250,15 @@ module.exports = {
             const key = await cacheKeyFor(req, func);
             if (!key) return await controller[func].func(req, res, next);
 
-            if (FileCacheManager.exists(key.fileName, func, key.offset)) {
-                sendCached(res, func, FileCacheManager.read(key.fileName, func, req.query.rtype));
-                return next();
+            if (await FileCacheManager.exists(key.fileName, func, key.offset)) {
+                // The cleanup job and ?func=cleancachefiles both delete underneath a request,
+                // so the file can be gone by the time it is read. A null here means the answer
+                // has to be built after all; sending it would be an empty 200 to the device.
+                const cached = await FileCacheManager.read(key.fileName, func, req.query.rtype);
+                if (cached !== null) {
+                    sendCached(res, func, cached);
+                    return next();
+                }
             }
             if (FileCacheManager.isDownloadStarted(key.fileName)) {
                 return next(new ServiceError(-20095, "File Not Ready"));
@@ -200,3 +273,6 @@ module.exports = {
 
 module.exports.controller = controller;
 module.exports.configFor = configFor;
+// Exported for the tests: the cached view is what a request actually gets, so its invalidation
+// is the thing worth asserting, not the layering configFor does underneath it.
+module.exports.derivedFor = derivedFor;

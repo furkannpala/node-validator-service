@@ -2,9 +2,9 @@
 const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run } = require('../fakeConn');
 
-const getCardInfo = require('../../validator/controller/getCardInfo');
-const getUnCalculated = require('../../validator/controller/getUnCalculatedTransaction');
-const updateUnCalculated = require('../../validator/controller/updateUnCalculatedTransaction');
+const getCardInfo = require('../../validator/controller/card').funcs.getcardinfo;
+const getUnCalculated = require('../../validator/controller/fare').funcs.getuncalculatedtransaction;
+const updateUnCalculated = require('../../validator/controller/fare').funcs.updateuncalculatedtransaction;
 
 const CARD_ROW = {
     CARD_NO: '6372430000000001', ALIAS_NO: 'A1', REGISTERED: '0',
@@ -81,6 +81,17 @@ describe('getuncalculatedtransaction', () => {
 
         assert.strictEqual(conn.matching('FROM AFC_TD A').length, 0);
         assert.ok(res.locals.data.includes('ROOT'));
+    });
+
+    it('reads the taps once however many rows tbl_fare_config has for the type', async () => {
+        // tbl_fare_config has no unique key on card_type, and the card type list is a
+        // membership test: a second active 09 row must not put every tap in twice.
+        const conn = fakeConn(answer(['09', '11', '09'], [FARE_ROW]));
+        const res = makeRes();
+        await run(getUnCalculated, makeReq(conn, {}), res);
+
+        assert.strictEqual(conn.matching('FROM AFC_TD A').length, 1);
+        assert.strictEqual(res.locals.data.split('<FARE').length - 1, 1);
     });
 
     it('keeps the literal "null" Java wrote for an empty column', async () => {

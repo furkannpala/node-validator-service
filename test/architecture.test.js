@@ -49,14 +49,38 @@ describe('architecture', () => {
         assert.deepStrictEqual(offenders, []);
     });
 
-    it('every controller file name is a lowercase-unique ?func= key', () => {
+    /**
+     * Endpoints are grouped by subject, so the file name is no longer the ?func= key — the keys
+     * of each group's funcs table are. That makes the registry the thing worth checking: a key
+     * claimed by two groups would shadow one endpoint with another, and only the device that
+     * stopped getting answers would notice.
+     */
+    it('every registered ?func= key is lowercase and claimed once', () => {
         const dir = path.join(ROOT, 'validator', 'controller');
         if (!fs.existsSync(dir)) return;
+
         const seen = new Map();
         for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
-            const key = path.parse(f).name.toLocaleLowerCase('en-US');
-            assert.ok(!seen.has(key), `duplicate func key '${key}': ${seen.get(key)} vs ${f}`);
-            seen.set(key, f);
+            const loaded = require(path.join(dir, f));
+            const keys = loaded?.funcs
+                ? Object.keys(loaded.funcs)
+                : [path.parse(f).name.toLocaleLowerCase('en-US')];
+
+            for (const key of keys) {
+                assert.strictEqual(key, key.toLocaleLowerCase('en-US'),
+                    `func key '${key}' in ${f} is not lowercase; ?func= is matched lowercased`);
+                assert.ok(!seen.has(key), `duplicate func key '${key}': ${seen.get(key)} vs ${f}`);
+                seen.set(key, f);
+            }
+        }
+        assert.ok(seen.size > 0, 'no controller registered at all');
+    });
+
+    it('every registered endpoint exposes the func(req, res, next) contract', () => {
+        const dispatcher = require(path.join(ROOT, 'validator', 'index.js'));
+        for (const [key, impl] of Object.entries(dispatcher.controller)) {
+            assert.strictEqual(typeof impl?.func, 'function', `${key} has no func()`);
+            assert.strictEqual(impl.func.length, 3, `${key}.func must take (req, res, next)`);
         }
     });
 });

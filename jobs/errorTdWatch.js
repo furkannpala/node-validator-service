@@ -32,11 +32,14 @@ async function run(manager, dao = errorTdDao) {
             + `${since.toISOString()} (${breakdown})`);
     }
 
-    run.lastRunAt = now;
+    // Only a clean round moves the window. A system whose pool was down did not get read, and
+    // advancing past it would drop its error rows for that window instead of reporting them
+    // late: double reporting is the safe side here, silence is not.
     if (errors.length) {
         ULog.error(`errorTdWatch: ${errors.join(" | ")}`);
         throw new Error(errors.join(" | "));
     }
+    run.lastRunAt = now;
     return results;
 }
 

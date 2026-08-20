@@ -7,7 +7,11 @@ const { debugSql } = require("../sqlLog");
  */
 class MstBusDaoImpl extends BaseDao {
 
-    checkStationSql = 'select * from mst_bus where bus_id=:bus_id and  station_type=:station_type';
+    // Only the existence of a row matters, so the columns are not fetched and the scan stops at
+    // the first hit. Java selected * here and threw the row away; on senddata that is the gate
+    // every request passes through.
+    checkStationSql = 'select 1 from mst_bus where bus_id=:bus_id and station_type=:station_type '
+        + 'and rownum = 1';
 
     // Java read only comp_code here, without any validity window.
     checkCompanySql = ' select comp_code from mst_bus where bus_id =:bus_id ';

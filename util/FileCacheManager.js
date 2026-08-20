@@ -1,4 +1,4 @@
-const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
 const moment = require("moment");
 const { ULog } = require("../../../lib/utils");
@@ -31,6 +31,7 @@ const GRACE_MS = 5 * 60 * 1000;
 const downloads = new Map();   // fileName -> start time
 const offsets = new Map();     // systemId -> fn_get_system_pdate('M') in minutes
 let startTime = 0;
+let directoriesReady = false;
 
 function baseDir() {
     return path.join(process.cwd(), DIRECTORY_NAME);
@@ -103,23 +104,32 @@ function isSameDate(opdate, version, offsetMinutes) {
     return versionDate !== "" && versionDate <= sysdate;
 }
 
-function createDirectory() {
+/**
+ * The directory tree is created once per process and again after every clean, not on every
+ * write: store() used to pay nine mkdir syscalls for each cached file.
+ */
+async function createDirectory() {
     try {
-        fs.mkdirSync(baseDir(), { recursive: true });
+        await fsp.mkdir(baseDir(), { recursive: true });
         for (const op of Object.values(OPERATIONS)) {
-            fs.mkdirSync(path.join(baseDir(), op.directory), { recursive: true });
+            await fsp.mkdir(path.join(baseDir(), op.directory), { recursive: true });
         }
+        directoriesReady = true;
     } catch (e) {
         ULog.error(`cache createDirectory failed: ${e?.message}`);
     }
 }
 
-function cleanDirectory() {
+async function cleanDirectory() {
     try {
-        fs.rmSync(baseDir(), { recursive: true, force: true });
+        await fsp.rm(baseDir(), { recursive: true, force: true });
     } catch (e) {
         ULog.error(`cache cleanDirectory failed: ${e?.message}`);
     } finally {
+        directoriesReady = false;
+        // A file the tree no longer holds is not being built either, or the marker would keep
+        // answering -20095 for the next two minutes while the file is already gone.
+        downloads.clear();
         startTime = Date.now();
     }
 }
@@ -128,15 +138,19 @@ function cleanDirectory() {
  * Deletes cached files that are older than maxAgeMs and reports how many went. This is what
  * the cacheCleanup job runs; ?func=cleancachefiles still empties the whole tree at once.
  */
-function removeExpired(maxAgeMs) {
+async function removeExpired(maxAgeMs) {
     const cutoff = Date.now() - maxAgeMs;
     let removed = 0;
     for (const dir of directories()) {
-        for (const entry of safeList(dir)) {
+        for (const entry of await safeList(dir)) {
             const target = path.join(dir, entry);
             try {
-                if (!fs.statSync(target).isFile() || fs.statSync(target).mtimeMs > cutoff) continue;
-                fs.rmSync(target, { force: true });
+                // One stat, not two: the old form called statSync twice for every entry.
+                const stat = await fsp.stat(target);
+                if (!stat.isFile() || stat.mtimeMs > cutoff) continue;
+                await fsp.rm(target, { force: true });
+                // The file is gone, so the build marker that belongs to it has to go too.
+                downloads.delete(entry);
                 removed++;
             } catch (e) {
                 ULog.error(`cache removeExpired failed for ${target}: ${e?.message}`);
@@ -151,40 +165,65 @@ function directories() {
     return [baseDir(), ...Object.values(OPERATIONS).map((op) => path.join(baseDir(), op.directory))];
 }
 
-function safeList(dir) {
+async function safeList(dir) {
     try {
-        return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+        return await fsp.readdir(dir);
     } catch (e) {
-        ULog.error(`cache list failed for ${dir}: ${e?.message}`);
+        // ENOENT is the normal state before the first store; anything else is worth a line.
+        if (e?.code !== "ENOENT") ULog.error(`cache list failed for ${dir}: ${e?.message}`);
         return [];
     }
 }
 
-/** Also performs the day rollover: a cached file must never outlive its operation day. */
-function exists(fileName, func, offsetMinutes) {
+/**
+ * Also performs the day rollover: a cached file must never outlive its operation day.
+ *
+ * Every filesystem call on the request path is asynchronous. These files reach several MB
+ * (the offline card list, the stop sounds) and the service runs one event loop: a synchronous
+ * read here stalls every other request in flight for the whole duration of the read.
+ */
+async function exists(fileName, func, offsetMinutes) {
     const now = Date.now();
     const dayNow = shiftedDate(offsetMinutes, GRACE_MS).dayOfYear();
     const dayStart = moment(startTime - (Number(offsetMinutes) || 0) * 60 * 1000 - GRACE_MS).dayOfYear();
 
     if (now - startTime > DAY_MS || dayNow !== dayStart) {
-        cleanDirectory();
-        createDirectory();
+        await cleanDirectory();
+        await createDirectory();
     }
-    return fs.existsSync(filePath(fileName, func));
+    return await isFile(filePath(fileName, func));
+}
+
+async function isFile(full) {
+    try {
+        return (await fsp.stat(full)).isFile();
+    } catch (e) {
+        return false;
+    }
 }
 
 /** rtype=URI answers with the path itself instead of the content, as Java did. */
-function read(fileName, func, rtype) {
+async function read(fileName, func, rtype) {
     const full = filePath(fileName, func);
-    if (!fs.existsSync(full)) return null;
-    if (String(rtype).toUpperCase() === "URI") return Buffer.from(full);
-    return fs.readFileSync(full);
+    if (String(rtype).toUpperCase() === "URI") {
+        return await isFile(full) ? Buffer.from(full) : null;
+    }
+    try {
+        return await fsp.readFile(full);
+    } catch (e) {
+        // The file can disappear between exists() and here — the cleanup job and
+        // ?func=cleancachefiles both delete underneath a request. The caller falls back to
+        // building the answer rather than sending an empty body.
+        if (e?.code !== "ENOENT") ULog.error(`cache read failed for ${fileName}: ${e?.message}`);
+        return null;
+    }
 }
 
-function store(func, fileName, content) {
+async function store(func, fileName, content) {
     try {
-        createDirectory();
-        fs.writeFileSync(filePath(fileName, func), Buffer.isBuffer(content) ? content : Buffer.from(String(content)));
+        if (!directoriesReady) await createDirectory();
+        await fsp.writeFile(filePath(fileName, func),
+            Buffer.isBuffer(content) ? content : Buffer.from(String(content)));
     } catch (e) {
         // Java swallowed this silently; a failed write only costs the next caller a rebuild.
         ULog.error(`cache store failed for ${fileName}: ${e?.message}`);

@@ -11,6 +11,10 @@ module.exports = {
     "runTime": new Date(),
     loaded: false,
 
+    // Bumped on every setCfgs. Anything that derives a per-request view from cfgs caches it
+    // against this number instead of rebuilding the view on each call; see validator/index.js.
+    revision: 0,
+
     // Schema that owns VALIDATOR_SERVICE_CONFIG, applied by util/SchemaUtil.qualifyTable.
     // Empty = unqualified (the pool user owns it); 'KKCONFIG' on test/prod. Read at call time.
     kk_config_scheme: '',
@@ -30,6 +34,7 @@ module.exports = {
         for (const key of Object.keys(cfgs)) delete cfgs[key];
         Object.assign(cfgs, newCfgs || {});
         module.exports.loaded = true;
+        module.exports.revision++;
         return cfgs;
     },
 

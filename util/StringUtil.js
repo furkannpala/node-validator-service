@@ -62,10 +62,6 @@ function lpadZero(data, length) {
     return s.substring(s.length - length);
 }
 
-
-
-
-
 module.exports = {
     isNullOrEmpty,
     parseIntStrict,

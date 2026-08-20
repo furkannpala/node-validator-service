@@ -3,10 +3,10 @@ const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run } = require('../fakeConn');
 const { installFakeKafka, resetKafka, sentPayload } = require('../fakeKafka');
 
-const sendCfg = require('../../validator/controller/sendCfg');
-const sendLog = require('../../validator/controller/sendLog');
-const sendGps = require('../../validator/controller/sendGps');
-const sendData = require('../../validator/controller/sendData');
+const sendCfg = require('../../validator/controller/device').funcs.sendcfg;
+const sendLog = require('../../validator/controller/device').funcs.sendlog;
+const sendGps = require('../../validator/controller/gps').funcs.sendgps;
+const sendData = require('../../validator/controller/transaction').funcs.senddata;
 
 const BROKERS = { kk_bootstrap_servers: 'broker:9092' };
 

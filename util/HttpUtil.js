@@ -9,6 +9,23 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 30000;
 const DEFAULT_READ_TIMEOUT_MS = 60000;
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 
+/**
+ * Node's globalAgent runs with keepAlive off, so every call here opened a fresh TCP connection
+ * — and a fresh TLS handshake on https. senddata forwards the whole body to the ticket engine
+ * on every single request, so that was one connection setup per device call. These sockets are
+ * pooled instead and stay warm between calls.
+ *
+ * maxSockets bounds how many calls can be in flight towards one host at a time; beyond that
+ * Node queues them, which is the right shape for a gateway that is slower than we are.
+ */
+const AGENT_OPTIONS = { keepAlive: true, keepAliveMsecs: 30000, maxSockets: 64, maxFreeSockets: 16 };
+const httpAgent = new http.Agent(AGENT_OPTIONS);
+const httpsAgent = new https.Agent(AGENT_OPTIONS);
+
+function agentFor(secure) {
+    return secure ? httpsAgent : httpAgent;
+}
+
 function positive(value, fallback) {
     const n = Number(value);
     return Number.isFinite(n) && n > 0 ? n : fallback;
@@ -38,6 +55,7 @@ function post(rawUrl, body, options = {}) {
     return new Promise((resolve, reject) => {
         const request = (secure ? https : http).request(url, {
             method: "POST",
+            agent: agentFor(secure),
             headers: {
                 "User-Agent": USER_AGENT,
                 "Accept-Language": ACCEPT_LANGUAGE,
@@ -97,6 +115,7 @@ function probe(rawUrl, timeoutMs) {
     return new Promise((resolve, reject) => {
         const request = (secure ? https : http).request(url, {
             method: "GET",
+            agent: agentFor(secure),
             headers: { "User-Agent": USER_AGENT },
         });
 
@@ -124,6 +143,6 @@ function probe(rawUrl, timeoutMs) {
 }
 
 module.exports = {
-    post, probe, joinLines,
+    post, probe, joinLines, httpAgent, httpsAgent,
     DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS, DEFAULT_PROBE_TIMEOUT_MS,
 };

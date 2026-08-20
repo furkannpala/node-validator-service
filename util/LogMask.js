@@ -28,15 +28,21 @@ function maskPan(value) {
     return s.slice(0, 6) + '*'.repeat(s.length - 10) + s.slice(-4);
 }
 
+// The key sets are constants, so the pattern is too: it used to be recompiled on every call,
+// on the log path of every DAO statement.
+const SENSITIVE_JSON_KEY = new RegExp(
+    `("(?:${[...PAN_KEYS, ...REDACT_KEYS].join('|')})"\\s*:\\s*")([^"]*)(")`, 'gi');
+
 /**
  * Masks sensitive fields inside raw JSON text without parsing it: record_value may well be
  * malformed (that is why poison-pill records get logged), and parsing would throw here.
  */
 function maskRawJson(text) {
     let s = String(text);
-    const keys = [...PAN_KEYS, ...REDACT_KEYS].join('|');
-    const re = new RegExp(`("(?:${keys})"\\s*:\\s*")([^"]*)(")`, 'gi');
-    s = s.replace(re, (_all, head, value, tail) => {
+    // lastIndex is shared state on a /g regex; replace() resets it, but only if it is not
+    // left mid-scan by an earlier throw, so it is cleared here rather than assumed.
+    SENSITIVE_JSON_KEY.lastIndex = 0;
+    s = s.replace(SENSITIVE_JSON_KEY, (_all, head, value, tail) => {
         const key = head.slice(1, head.indexOf('"', 1));
         return head + maskScalar(key.toLowerCase(), value) + tail;
     });

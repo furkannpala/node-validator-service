@@ -1,3 +1,9 @@
+/**
+ * senddata: the ticket and trip records the device uploads. The heaviest write path in the service.
+ *
+ * The keys of the funcs table at the bottom are the ?func= values this file answers;
+ * validator/index.js registers them straight from there.
+ */
 const { ValidatorControllerBase } = require("../ValidatorControllerBase");
 const DataTransaction = require("../../bean/DataTransaction");
 const DataStrategy = require("../../strategy/DataStrategy");
@@ -8,8 +14,12 @@ const XmlWalk = require("../../util/XmlWalk");
 const DatabaseError = require("../../util/DatabaseError");
 const HttpUtil = require("../../util/HttpUtil");
 const EmvUsage = require("../../util/EmvUsageBatch");
-const { EmvUsageBatch } = EmvUsage;
 const { isUniqueViolation } = require("../dao/daoUtil");
+
+
+// ---------------------------------------------------------------- ?func=senddata
+
+const { EmvUsageBatch } = EmvUsage;
 
 class SendData extends ValidatorControllerBase {
     constructor() {
@@ -102,7 +112,7 @@ class SendData extends ValidatorControllerBase {
     async sendEmvUsages(req, cfg) {
         if (!cfg.emvUsages || cfg.emvUsages.isEmpty()) return;
         await EmvUsage.send(cfg.emvUsages, this.cfg(req, 'credit_card_data_url', ''),
-            this.kpgTimeouts(req), req.sessionId);
+            this.kpgTimeouts(req));
     }
 
     /**
@@ -110,7 +120,8 @@ class SendData extends ValidatorControllerBase {
      * where Java did it. An empty URL from PK_CONFIG turns the hop off.
      */
     async forwardToTicketEngine(req) {
-        const url = await this.pkConfig.getDataForwardUrl(req.dbConn, req.sessionId);
+        const url = await this.pkConfig.getDataForwardUrl(req.dbConn, req.sessionId,
+            req.systemId ?? req.query.systemid);
         if (!url) return;
 
         const answer = await HttpUtil.post(
@@ -192,4 +203,9 @@ class SendData extends ValidatorControllerBase {
     }
 }
 
-module.exports = new SendData();
+
+module.exports = {
+    funcs: {
+        senddata: new SendData(),
+    },
+};

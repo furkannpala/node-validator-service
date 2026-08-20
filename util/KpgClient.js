@@ -15,11 +15,10 @@ function buildUrl(baseUrl, action, systemId) {
     return `${url}${separator}${action}&systemid=${systemId}`;
 }
 
-async function call(baseUrl, action, systemId, body, timeouts, sessionId) {
+async function call(baseUrl, action, systemId, body, timeouts) {
     return await HttpUtil.post(buildUrl(baseUrl, action, systemId), body, {
         connectTimeoutMs: timeouts?.connectTimeoutMs,
         readTimeoutMs: timeouts?.readTimeoutMs,
-        sessionId,
     });
 }
 

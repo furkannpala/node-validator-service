@@ -20,4 +20,4 @@ function debugSql(sql, binds, sessionId) {
     ULog.debug(binds === undefined ? sql : sql + " " + maskJson(binds), sessionId);
 }
 
-module.exports = { debugSql, SQL_DEBUG_ENABLED: ENABLED };
+module.exports = { debugSql };

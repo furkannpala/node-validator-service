@@ -70,7 +70,7 @@ describe('dispatcher file cache', () => {
         assert.strictEqual(err, undefined);
         assert.strictEqual(calls, 1);
         assert.strictEqual(res.locals.data, payload);
-        assert.strictEqual(FileCacheManager.read(fileName(), 'getroute').toString(), payload);
+        assert.strictEqual((await FileCacheManager.read(fileName(), 'getroute')).toString(), payload);
     });
 
     it('serves the second call from disk without touching the controller', async () => {
@@ -87,14 +87,14 @@ describe('dispatcher file cache', () => {
         await dispatch({ func: 'getroute', systemid: '017', version, fromservice: '1' });
         await dispatch({ func: 'getroute', systemid: '017', version, fromservice: '1' });
         assert.strictEqual(calls, 2);
-        assert.strictEqual(FileCacheManager.read(fileName(), 'getroute'), null);
+        assert.strictEqual(await FileCacheManager.read(fileName(), 'getroute'), null);
     });
 
     it('does not cache a stale-version answer', async () => {
         // No opdate and a version stamp in the future: the answer is not shareable.
         await dispatch({ func: 'getroute', systemid: '017', version: '29990101000000' });
         assert.strictEqual(calls, 1);
-        assert.strictEqual(FileCacheManager.read(`017_ROUTE_29990101000000_${moment().format('YYYYMMDD')}`, 'getroute'), null);
+        assert.strictEqual(await FileCacheManager.read(`017_ROUTE_29990101000000_${moment().format('YYYYMMDD')}`, 'getroute'), null);
     });
 
     describe('error payloads', () => {
@@ -105,14 +105,14 @@ describe('dispatcher file cache', () => {
             const { err } = await dispatch({ func: 'getroute', systemid: '017', version });
             assert.strictEqual(err.code, -20098);
             assert.strictEqual(err.message, 'Get Full Version');
-            assert.strictEqual(FileCacheManager.read(fileName(), 'getroute'), null);
+            assert.strictEqual(await FileCacheManager.read(fileName(), 'getroute'), null);
         });
 
         it('turns any other error code into "Result Has Error"', async () => {
             payload = '<ERROR code="-1" message="no plan found"/>';
             const { err } = await dispatch({ func: 'getroute', systemid: '017', version });
             assert.strictEqual(err.code, -20093);
-            assert.strictEqual(FileCacheManager.read(fileName(), 'getroute'), null);
+            assert.strictEqual(await FileCacheManager.read(fileName(), 'getroute'), null);
         });
 
         it('releases the download lock so the next call can retry', async () => {
@@ -125,7 +125,7 @@ describe('dispatcher file cache', () => {
             payload = Buffer.from([0x00, 0x01, 0x02, 0x03]);
             const { err } = await dispatch({ func: 'getroute', systemid: '017', version });
             assert.strictEqual(err, undefined);
-            assert.deepStrictEqual(FileCacheManager.read(fileName(), 'getroute'), payload);
+            assert.deepStrictEqual(await FileCacheManager.read(fileName(), 'getroute'), payload);
         });
     });
 
@@ -135,5 +135,30 @@ describe('dispatcher file cache', () => {
         assert.strictEqual(err.code, -20095);
         assert.strictEqual(err.message, 'File Not Ready');
         assert.strictEqual(calls, 0);
+    });
+
+    it('releases the download lock after a successful build too', async () => {
+        await dispatch({ func: 'getroute', systemid: '017', version });
+        // Left behind, the marker grows the map for the life of the process and answers -20095
+        // for two minutes to anyone who arrives after the file itself has been swept away.
+        assert.strictEqual(FileCacheManager.isDownloadStarted(fileName()), false);
+    });
+
+    it('rebuilds instead of sending an empty body when the file is swept mid-request', async () => {
+        // Build it once so exists() is satisfied, then delete it underneath the next call, which
+        // is exactly what the cleanup job and ?func=cleancachefiles do to a live request.
+        await dispatch({ func: 'getroute', systemid: '017', version });
+        assert.strictEqual(calls, 1);
+
+        const realRead = FileCacheManager.read;
+        FileCacheManager.read = async () => null;
+        try {
+            const { err, res } = await dispatch({ func: 'getroute', systemid: '017', version });
+            assert.strictEqual(err, undefined);
+            assert.strictEqual(calls, 2, 'the controller runs again rather than answering null');
+            assert.strictEqual(res.locals.data, payload);
+        } finally {
+            FileCacheManager.read = realRead;
+        }
     });
 });

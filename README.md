@@ -20,7 +20,7 @@ node-app-server/
 | `index.js` | Webapp sözleşmesi: route dizisi export eder (`validator`, `management`) |
 | `config/system_cfg.js` | Route prefix (`Validator Services`) ve KKCONFIG erişimi |
 | `validator/index.js` | Dispatcher — `?func=` anahtarını controller'a bağlar, dosya cache yolunu yürütür |
-| `validator/controller/` | Endpoint başına bir dosya; **dosya adı (küçük harf) = `?func=` değeri** |
+| `validator/controller/` | Konuya göre gruplanmış endpoint'ler (`card.js`, `route.js`, `device.js` …); her dosya bir `funcs` tablosu export eder ve **tablonun anahtarları `?func=` değerleridir** |
 | `validator/dao/oracle/` | Oracle: tablo ya da package başına bir dosya |
 | `validator/dao/sqlite/` | Cihaza giden `.db` dosyalarının tabloları (10 DAO + `SqliteDb`) |
 | `validator/daoFactory/` | `oracle` / `sqlite` implementasyon seçimi |
@@ -51,14 +51,18 @@ yeni bir klondan sonra uygulanmalıdır.
 "test_validator_service": "mocha ./webapps/node-validator-service/test --recursive --exit --reporter=./node_modules/mochawesome --reporter-options reportDir=webapps/node-validator-service/test-report,reportTitle=\"Validator Services Test Report\",reportPageTitle=\"Validator Service Test Report\",overwrite=true,enableCode=false"
 ```
 
-Boyut ve karmaşıklık limitleri (metot 80 satır, derinlik 4, dosya 400 satır) bir lint
-kuralı ile zorlanmıyor; kod bunlara uyacak şekilde yazılıyor. DAO katmanı kuralını ise
-`test/architecture.test.js` zorluyor — dosyalarda `require('oracledb')` veya SQL metni
-`validator/dao/` dışında görünürse test kırmızıya döner.
+Metot 80 satır ve derinlik 4 limitleri bir lint kuralı ile zorlanmıyor; kod bunlara uyacak
+şekilde yazılıyor. Dosya boyutu için bir limit yok: controller'lar konuya göre gruplandığı
+için bazı dosyalar (`device.js`, `route.js`) 400 satırı aşıyor.
+
+`test/architecture.test.js` üç kuralı zorluyor: `require('oracledb')` veya SQL metni
+`validator/dao/` dışında görünemez; kayıtlı her `?func=` anahtarı küçük harftir ve tek bir
+grup tarafından sahiplenilir; kayıtlı her endpoint `func(req, res, next)` sözleşmesini
+karşılar.
 
 ## Migrasyon durumu
 
-Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 controller, 45 Oracle DAO, 10 SQLite DAO, 7 job, 3 strateji, 4 bean, 338 test.
+Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 endpoint (13 controller dosyası), 45 Oracle DAO, 10 SQLite DAO, 7 job, 3 strateji, 4 bean, 346 test.
 (Ayrıca `oracle/` altında DAO olmayan 2 yardımcı: `tdSql.js` SQL builder, `apcBind.js` ortak projeksiyon.)
 
 **DAO sayısı neden Java'nın 9'undan fazla:** Java'da 9 DAO sınıfı vardı ama tüm SQL'in

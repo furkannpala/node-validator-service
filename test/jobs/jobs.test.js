@@ -199,6 +199,28 @@ describe('errorTdWatch', () => {
         await assert.rejects(() => errorTdWatch.run(manager, dao), /ORA-12541/);
         assert.strictEqual(seen.length, 2, 'the second system was still asked');
     });
+
+    it('does not move the window past a round that failed', async () => {
+        const windows = [];
+        const manager = managerOf({ app: { error_td_watch_interval_ms: 60000 }, '017': {} });
+        let fail = true;
+        const dao = {
+            countSince: async (conn, since) => {
+                windows.push(since);
+                if (fail) throw new Error('ORA-12541');
+                return [];
+            },
+        };
+
+        await assert.rejects(() => errorTdWatch.run(manager, dao), /ORA-12541/);
+        fail = false;
+        await errorTdWatch.run(manager, dao);
+
+        // Had the failed round moved the window, the second one would start where it ran —
+        // a lookback of about zero — and the rows of the failed window would be lost for good.
+        const secondLookback = Date.now() - windows[1].getTime();
+        assert.ok(secondLookback >= 60000 - 500, `still looks an interval back, got ${secondLookback}`);
+    });
 });
 
 describe('requestLogRetention', () => {

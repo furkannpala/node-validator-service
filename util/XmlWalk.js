@@ -36,11 +36,28 @@ function collect(nodes, out) {
     }
 }
 
-/** Descendants of one element with the given tag name, as Element.getElementsByTagName did. */
+/**
+ * Descendants of one element with the given tag name, as Element.getElementsByTagName did.
+ * The name is tested during the walk rather than afterwards: senddata calls this once per DATA
+ * element, and building the full descendant list only to throw most of it away was the cost of
+ * every record in the body.
+ */
 function descendants(node, tagName) {
+    const wanted = String(tagName).toLowerCase();
     const out = [];
-    collect(node?.elements, out);
-    return out.filter((e) => e.name.toLowerCase() === String(tagName).toLowerCase());
+    collectNamed(node?.elements, wanted, out);
+    return out;
+}
+
+function collectNamed(nodes, wanted, out) {
+    if (!Array.isArray(nodes)) return;
+    for (const node of nodes) {
+        if (node.type !== "element") continue;
+        if (node.name.toLowerCase() === wanted) {
+            out.push({ name: node.name, attrs: node.attributes || {}, node });
+        }
+        collectNamed(node.elements, wanted, out);
+    }
 }
 
 module.exports = { elements, descendants };

@@ -91,7 +91,7 @@ class DRecordStrategy {
         const totalUsageAmt = StringUtil.parseIntStrict(trx.usage_amt) + trx.service_charge;
         cfg.emvUsages.add({
             alias_no: trx.alias_no, card_no: trx.card_no, usage_amt: totalUsageAmt,
-            sam_id: trx.sam_id, pdate: await this.pkConfig.getOperationPdate(conn, sessionId),
+            sam_id: trx.sam_id, pdate: await this.operationPdate(conn, cfg, sessionId),
             boarding_date_time: trx.boarding_date_time, usage_cnt: trx.usage_cnt, ptcn: trx.ptcn,
             enc_pan: trx.enc_pan, masked_pan: trx.masked_pan, bin: trx.bin,
             late_auth: trx.late_auth, expired_date: trx.expired_date, amount: trx.emv_amount,
@@ -104,6 +104,19 @@ class DRecordStrategy {
             travel_type: trx.travel_type, stop_name: trx.stop_name,
         });
         return 0;
+    }
+
+    /**
+     * The operation day of the whole body, read once. This used to be a round trip per credit
+     * card ticket inside the record loop, so a body with twenty of them paid for twenty
+     * identical selects; the operation day cannot turn over in the middle of one request.
+     * cfg is built per request by senddataConfig, so nothing carries over to the next one.
+     */
+    async operationPdate(conn, cfg, sessionId) {
+        if (cfg.operationPdate === undefined) {
+            cfg.operationPdate = await this.pkConfig.getOperationPdate(conn, sessionId);
+        }
+        return cfg.operationPdate;
     }
 
     /** The EMV child of the record, if the device sent one; the ptcn is what marks it present. */

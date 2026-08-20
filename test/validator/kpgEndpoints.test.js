@@ -5,8 +5,8 @@ const { makeReq, makeRes, run } = require('../fakeConn');
 
 const HttpUtil = require('../../util/HttpUtil');
 const KpgClient = require('../../util/KpgClient');
-const realAuth = require('../../validator/controller/realAuth');
-const sendEmvData = require('../../validator/controller/sendEmvData');
+const realAuth = require('../../validator/controller/payment').funcs.realauth;
+const sendEmvData = require('../../validator/controller/payment').funcs.sendemvdata;
 
 let server;
 let baseUrl;

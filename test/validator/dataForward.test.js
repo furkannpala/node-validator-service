@@ -2,7 +2,7 @@
 const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run } = require('../fakeConn');
 const HttpUtil = require('../../util/HttpUtil');
-const sendData = require('../../validator/controller/sendData');
+const sendData = require('../../validator/controller/transaction').funcs.senddata;
 
 const DATA_ATTRS = 'record_id="D0001" trans_seq_no="1" trans_flag="1" customer_flag="0"'
     + ' data_save_flag="0" station_type="1" transmit_cnt="1" bus_stop_code="45" alias_no="A1"'
@@ -31,6 +31,8 @@ describe('senddata data forward', () => {
     const realPost = HttpUtil.post;
 
     beforeEach(() => {
+        // test/rootHooks.js empties the ticket engine url cache before every case, so each one
+        // here really does read the url its own fakeConn hands back.
         posts = [];
         answer = '{"result":{"code":0}}';
         HttpUtil.post = async (url, body, options) => {

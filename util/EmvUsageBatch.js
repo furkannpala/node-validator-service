@@ -62,11 +62,10 @@ function readResponse(xml) {
  * Posts the batch. Every failure, including a rejected answer, comes back as one message so
  * the device sees the text Java produced — which nests its own wording twice on a rejection.
  */
-async function send(batch, creditCardDataUrl, timeouts, sessionId) {
+async function send(batch, creditCardDataUrl, timeouts) {
     if (!creditCardDataUrl) return;
     try {
-        const answer = await HttpUtil.post(`${creditCardDataUrl}${ACTION}`, batch.toXml(),
-            { ...timeouts, sessionId });
+        const answer = await HttpUtil.post(`${creditCardDataUrl}${ACTION}`, batch.toXml(), timeouts);
         const response = readResponse(answer);
         if (!response) {
             throw new Error(`error when parsing ${ACTION} service xml response, xml: ${answer}`);

@@ -1,7 +1,7 @@
 /* eslint-env mocha */
 const assert = require('assert');
 const { fakeConn, makeReq, makeRes, run } = require('../fakeConn');
-const sendData = require('../../validator/controller/sendData');
+const sendData = require('../../validator/controller/transaction').funcs.senddata;
 
 /**
  * Fields the two services disagreed on until the write comparison put the same body through
