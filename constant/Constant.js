@@ -4,7 +4,7 @@ const path = require('path');
 // here the equivalent anchor is the node-app-server working directory.
 const BASE_DIR = process.cwd();
 
-module.exports = Object.freeze({
+module.exports = {
     SQL_EXCEPTION_UNIQUE_INDEX: 1,
 
     ROUTE_DB_FILE_PATH: path.join(BASE_DIR, 'ValidatorServiceRouteDbFile'),
@@ -22,4 +22,4 @@ module.exports = Object.freeze({
     BUS_STATION_TYPES: new Set(['1', '5']),
 
     DEFAULT_CURRENCY_MULTIPLIER: 100,
-});
+};

@@ -1,11 +1,22 @@
 const { ULog, ServiceError } = require("../../../lib/utils");
 const system_cfg = require("../config/system_cfg");
 const configDaoImpl = require("../validator/dao/oracle/ConfigDaoImpl");
-const JobManager = require("../jobs/JobManager");
-const { JOBS } = require("../jobs");
+const { JOBS, manager: JobManager } = require("../jobs");
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+
 const SECRET_KEY = /pass|secret|token|pwd|credential|apikey|api_key/i;
+
+/**
+ * Where a job's flag is on right now. Read straight from the live config rather than from what
+ * was true at bind time, because the runner reads the flag on every cycle too.
+ */
+function enabledFor(job) {
+    if (!JobManager.appConfig) return [];
+    const targets = job.scope === "service" ? ["app"] : JobManager.systemIds();
+    return targets.filter((systemId) =>
+        JobManager.isEnabled(job, JobManager.contextFor(systemId, "getjobs")));
+}
 
 const controller = {
     getversion: async (req, res) => {
@@ -18,7 +29,7 @@ const controller = {
     },
 
     // Reads the config table straight through and refreshes the in-memory copy. The
-    // configWatch job does the same on a timer; this is the by-hand path.
+    // config_watch job does the same on a timer; this is the by-hand path.
     getconfig: async (req, res) => {
         const rows = await configDaoImpl.getAllConfig();
         const cfgs = {};
@@ -45,30 +56,34 @@ const controller = {
         };
     },
     /**
-     * Every job the manager knows about, registered or not. A job that is off by default shows
-     * up as registered:false so the list explains its own absence from the console.
+     * Every job in the JOBS array, with the group it was scheduled in and where it is switched
+     * on. A job that is off shows up with an empty enabledFor, so the list explains its own
+     * silence; the group carries the run state, because a group is what the scheduler arms.
      */
     getjobs: async (req, res) => {
-        const handles = JobManager.handles || [];
-        const byName = new Map(handles.map((h) => [h.name, h]));
+        const groups = JobManager.groups || [];
 
         res.setHeader("Content-Type", JSON_CONTENT_TYPE);
         res.locals.data = {
             started: JobManager.started,
-            jobs: JOBS.map((job) => {
-                const handle = byName.get(job.name);
-                if (!handle) return { name: job.name, registered: false };
-                return {
-                    name: job.name,
-                    registered: true,
-                    rateMs: handle.rateMs,
-                    running: handle.running,
-                    lastRunAt: handle.lastRunAt,
-                    lastDurationMs: handle.lastDurationMs,
-                    lastError: handle.lastError,
-                    nextRunAt: handle.nextRunAt,
-                };
-            }),
+            groups: groups.map((group) => ({
+                jobs: group.jobs,
+                rateMs: group.intervalMs,
+                running: group.handle?.running,
+                lastRunAt: group.handle?.lastRunAt,
+                lastDurationMs: group.handle?.lastDurationMs,
+                lastError: group.handle?.lastError,
+                nextRunAt: group.handle?.nextRunAt,
+            })),
+            jobs: JOBS.map((job) => ({
+                name: job.name,
+                scope: job.scope || "system",
+                mode: job.mode || "sync",
+                flag: job.flag || null,
+                group: JobManager.groupOf(job.name)?.jobs.join("|") || null,
+                rateMs: JobManager.groupOf(job.name)?.intervalMs ?? null,
+                enabledFor: enabledFor(job),
+            })),
         };
     },
 

@@ -68,7 +68,7 @@ class GetCacheInfo extends ValidatorControllerBase {
 
 // ---------------------------------------------------------------- ?func=cleancachefiles
 
-// Empties the download cache by hand. The scheduled version of this is the cacheCleanup job.
+// Empties the download cache by hand. The scheduled version of this is the cache_cleanup job.
 class CleanCacheFiles extends ValidatorControllerBase {
 
     async func(req, res, next) {

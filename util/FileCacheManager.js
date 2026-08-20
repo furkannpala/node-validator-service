@@ -136,7 +136,7 @@ async function cleanDirectory() {
 
 /**
  * Deletes cached files that are older than maxAgeMs and reports how many went. This is what
- * the cacheCleanup job runs; ?func=cleancachefiles still empties the whole tree at once.
+ * the cache_cleanup job runs; ?func=cleancachefiles still empties the whole tree at once.
  */
 async function removeExpired(maxAgeMs) {
     const cutoff = Date.now() - maxAgeMs;

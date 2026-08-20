@@ -75,7 +75,7 @@ async function cacheKeyFor(req, func) {
 
 /**
  * The system row layered over the shared 'app' row, straight from memory. Java read this out
- * of EnvConfig the same way; the configWatch job keeps the copy current and ?func=reloadconfig
+ * of EnvConfig the same way; the config_watch job keeps the copy current and ?func=reloadconfig
  * refreshes it on demand, so a request never pays for a round trip to the config table.
  */
 function configFor(systemId) {
@@ -108,7 +108,7 @@ function isKafkaOnly(cfg, func) {
  * configFor copies the whole system row and savesRequestLog re-splits a comma list; both used
  * to run on every request for a result that only changes when the config does. The derived
  * view is built once per system and thrown away when system_cfg.revision moves, which
- * setCfgs bumps — the configWatch job and ?func=reloadconfig are the only writers.
+ * setCfgs bumps — the config_watch job and ?func=reloadconfig are the only writers.
  *
  * req.cfg is shared between requests from here on. Nothing writes to it: the controllers read
  * it through ValidatorControllerBase.cfg() and never assign.

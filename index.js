@@ -1,6 +1,6 @@
 const validator = require("./validator/");
 const management = require("./management/");
-const JobManager = require("./jobs/JobManager");
+const jobs = require("./jobs");
 const appConfig = require("./config/system_cfg");
 const KafkaProducer = require("./util/KafkaProducer");
 
@@ -8,7 +8,7 @@ const KafkaProducer = require("./util/KafkaProducer");
 // VS_AUTOSTART=0 to load the endpoints without any background work, which is what tests do.
 if (process.env.VS_AUTOSTART !== "0") {
     setImmediate(() => {
-        JobManager.init(appConfig).catch((e) => {
+        jobs.init(appConfig).catch((e) => {
             try {
                 require("../../lib/utils").ULog.error(`job autostart failed: ${e?.stack}`);
             } catch (_) {

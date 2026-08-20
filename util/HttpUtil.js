@@ -7,7 +7,6 @@ const ACCEPT_LANGUAGE = "en-US,en;q=0.5";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 30000;
 const DEFAULT_READ_TIMEOUT_MS = 60000;
-const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 
 /**
  * Node's globalAgent runs with keepAlive off, so every call here opened a fresh TCP connection
@@ -103,46 +102,7 @@ function post(rawUrl, body, options = {}) {
     });
 }
 
-/**
- * A GET with no business payload, for the kpgHealth job. The body is discarded and any status
- * counts as reachable: the probe answers "is the gateway there", not "is it happy".
- */
-function probe(rawUrl, timeoutMs) {
-    const url = new URL(String(rawUrl).split(" ").join("%20"));
-    const secure = url.protocol === "https:";
-    const started = Date.now();
-
-    return new Promise((resolve, reject) => {
-        const request = (secure ? https : http).request(url, {
-            method: "GET",
-            agent: agentFor(secure),
-            headers: { "User-Agent": USER_AGENT },
-        });
-
-        let settled = false;
-        const fail = (message) => {
-            if (settled) return;
-            settled = true;
-            request.destroy();
-            reject(new Error(message));
-        };
-
-        request.setTimeout(positive(timeoutMs, DEFAULT_PROBE_TIMEOUT_MS));
-        request.on("timeout", () => fail(`probe timed out: ${url.host}`));
-        request.on("error", (e) => fail(e.message));
-        request.on("response", (response) => {
-            response.resume();
-            response.on("end", () => {
-                if (settled) return;
-                settled = true;
-                resolve({ statusCode: response.statusCode, ms: Date.now() - started });
-            });
-        });
-        request.end();
-    });
-}
-
 module.exports = {
-    post, probe, joinLines, httpAgent, httpsAgent,
-    DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS, DEFAULT_PROBE_TIMEOUT_MS,
+    post, joinLines, httpAgent, httpsAgent,
+    DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS,
 };

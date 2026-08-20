@@ -22,13 +22,14 @@ node-app-server/
 | `validator/index.js` | Dispatcher — `?func=` anahtarını controller'a bağlar, dosya cache yolunu yürütür |
 | `validator/controller/` | Konuya göre gruplanmış endpoint'ler (`card.js`, `route.js`, `device.js` …); her dosya bir `funcs` tablosu export eder ve **tablonun anahtarları `?func=` değerleridir** |
 | `validator/dao/oracle/` | Oracle: tablo ya da package başına bir dosya |
+| `validator/dao/` | Katmanın ortak parçaları: `BaseDao` (execute + ifade izi), `daoUtil` (transaction sınırı), `sqlLog` (iz + kart maskeleme) |
 | `validator/dao/sqlite/` | Cihaza giden `.db` dosyalarının tabloları (10 DAO + `SqliteDb`) |
 | `validator/daoFactory/` | `oracle` / `sqlite` implementasyon seçimi |
 | `bean/` | XML gövdesini DAO bind objesine çeviren düz veri sınıfları |
-| `strategy/` | `senddata`'nın üç yolu (otobüs, istasyon, tchew) |
-| `util/` | FileCacheManager, RequestStats, LogMask, HttpUtil/KpgClient, XmlWalk, SqliteBuilder — veritabanına dokunmaz |
+| `strategy/` | `senddata`'nın üç yolu (otobüs, istasyon, tchew) + kayıt tipi alt stratejileri; `visitor/` F kaydının travel_type dallarını taşır |
+| `util/` | FileCacheManager, RequestStats, HttpUtil/KpgClient, XmlWalk, SqliteBuilder — veritabanına dokunmaz |
 | `constant/` | Java'dan birebir taşınan hata kodları ve sabitler |
-| `jobs/` | Zamanlanmış işler (7 job) + `JobManager` |
+| `jobs/` | `index.js`'teki `JOBS` dizisi (4 job) + generic runner `JobManager` |
 | `management/` | `?func=getversion`, `getconfig`, `getjobs`, `reloadconfig` |
 | `test/` | Mocha; `test/architecture.test.js` DAO katmanı kuralını zorlar |
 
@@ -58,7 +59,7 @@ karşılar.
 
 ## Migrasyon durumu
 
-Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 endpoint (13 controller dosyası), 45 Oracle DAO, 10 SQLite DAO, 7 job, 3 strateji, 4 bean, 346 test.
+Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 endpoint (13 controller dosyası), 45 Oracle DAO, 10 SQLite DAO, 4 job, 3 strateji, 4 bean, 358 test.
 (Ayrıca `oracle/` altında DAO olmayan 2 yardımcı: `tdSql.js` SQL builder, `apcBind.js` ortak projeksiyon.)
 
 **DAO sayısı neden Java'nın 9'undan fazla:** Java'da 9 DAO sınıfı vardı ama tüm SQL'in
@@ -140,11 +141,10 @@ Node 3×10):
 Yani sorun Node değil, tek süreç. Üç süreçle Java'yı yakalıyor, yük artınca geçiyor.
 
 **Çok süreçli kurulumda `VS_AUTOSTART=0` şart.** Job katmanı her süreçte ayrı ayrı başlıyor:
-üç süreç çalıştırıldığında `configWatch`, `cacheCleanup`, `errorTdWatch`, `poolPressure`
-üçünde birden kayıtlı oldu. `errorTdWatch` aynı satırları üç kez raporlar,
-`requestLogRetention` açıksa üç süreç aynı anda siler. Doğru kurulum: **yalnız bir süreç
-job'ları çalıştırır**, diğerleri `VS_AUTOSTART=0` ile kalkar (doğrulandı: job sayısı 0,
-endpoint'ler normal çalışıyor).
+üç süreç çalıştırıldığında `config_watch` ve `cache_cleanup` üçünde birden kayıtlı oldu.
+`request_log_retention` açıksa üç süreç aynı satırları aynı anda silmeye kalkar, `cache_cleanup`
+aynı dosyaları üç kez tarar. Doğru kurulum: **yalnız bir süreç job'ları çalıştırır**, diğerleri
+`VS_AUTOSTART=0` ile kalkar (doğrulandı: job sayısı 0, endpoint'ler normal çalışıyor).
 
 Her süreç kendi Oracle havuzunu açtığı için toplam bağlantı = süreç sayısı × `poolSize`;
 veritabanının `sessions` sınırı buna göre ayarlanmalı.
@@ -227,31 +227,46 @@ gönderilir. Kart kredi kartıysa ama `ptcn` yoksa kayıt `101` ile düşer.
 
 ## Job katmanı (Faz 7)
 
-Java'da yoktu. `VS_AUTOSTART=0` ile kapatılabilir (testler böyle çalışır).
-Job anahtarları **yalnız `app` satırından** okunur — bir job tüm servis için bir kez çalışır,
-kendine ait bir sistemi yoktur.
+Java'da yoktu. `VS_AUTOSTART=0` ile kapatılabilir (testler böyle çalışır). Yapı
+`node-abt-terminal`'deki ile aynı: job bir modül değil, `jobs/index.js` içindeki `JOBS`
+dizisinde **düz bir obje**; flag/requires kontrolü, periyot çözümü, sync-async ayrımı ve
+sistem döngüsü `JobManager` içinde tek yerde.
 
-| Job | Periyot anahtarı | Varsayılan | Durum |
-|---|---|---:|---|
-| `configWatch` | `config_refresh_ms` | 5 dk | açık |
-| `cacheCleanup` | `cache_cleanup_interval_ms` + `cache_max_age_ms` | 1 sa / 1 gün | açık |
-| `errorTdWatch` | `error_td_watch_interval_ms` | 5 dk | açık |
-| `poolPressure` | `pool_pressure_interval_ms` | 1 dk | açık |
-| `sqliteRefresh` | `sqlite_refresh_interval_ms` + `sqlite_refresh_systems` | 30 dk | **kapalı** (liste boş) |
-| `requestLogRetention` | `retention_interval_ms` + `request_log_retention_days` + `error_td_retention_days` + `retention_batch_rows` | 1 sa / 0 gün / 5000 | **kapalı** (0 gün) |
-| `kpgHealth` | `kpg_health_interval_ms` + `kpg_health_url` + `kpg_health_timeout_ms` | 5 dk / — / 5 sn | **kapalı** (URL boş) |
+| Alan | Anlamı |
+|---|---|
+| `scope` | `service` → turda bir kez; `system` (varsayılan) → her kkconfig satırı için bir kez |
+| `flag` | Açma anahtarı. `defaultOn:true` ise anahtar yokken de açıktır. **Her turda** okunur: DB'de flag açmak restart istemez |
+| `requires` | Dolu olması gereken anahtarlar; eksikse job o turu hata kaydıyla atlar |
+| `intervalKey` / `intervalMs` | Periyodun `app` anahtarı ve anahtar yokken kullanılacak varsayılan |
+| `mode` | `async` → sınırlı havuzda çalışır, grubun geri kalanını bekletmez |
+| `func(ctx)` | İş. `ctx` config okumalarını ve sistem job'ı için connection'ı taşır |
 
-Kapalı olan üçü `register()` içinde `null` döner, konsol listesinde görünmez.
-İlk koşuşlar 15 sn adımlarla kaydırılır (`STAGGER_STEP_MS`) — `queueMax=1` pool'larda
-açılışta üşüşmemek için.
+| Job | Kapsam | Flag | Periyot anahtarı | Varsayılan | Durum |
+|---|---|---|---|---:|---|
+| `config_watch` | service | `run_config_watch` | `config_refresh_ms` | 5 dk | açık |
+| `cache_cleanup` | service | `run_cache_cleanup` | `cache_cleanup_interval_ms` + `cache_max_age_ms` | 1 sa / 1 gün | açık |
+| `sqlite_refresh` | system (async) | `run_sqlite_refresh` | `sqlite_refresh_interval_ms` | 30 dk | **kapalı** |
+| `request_log_retention` | system | `run_retention` | `retention_interval_ms` + `request_log_retention_days` + `error_td_retention_days` + `retention_batch_rows` | 1 sa / — / 5000 | **kapalı** |
 
-`?func=getjobs` hepsini listeler (kayıtlı olmayanlar `registered:false` ile),
-`?func=reloadconfig` KKCONFIG'i yeniden okur ve job'ları yeniden bağlar.
+`request_log_retention` veri sildiği için gün sayısı `requires` listesindedir: flag açık ama
+`request_log_retention_days` boşsa job çalışmaz, hata kaydeder. `error_td_retention_days`
+verilmezse istek logunun süresini izler.
+
+**Aynı periyoda sahip job'lar tek scheduler'da gruplanır** ve grup içinde sırayla koşar —
+`queueMax=1` havuzlarda aynı anda connection istememelerinin yolu budur (eski `STAGGER_STEP_MS`
+job-başına kaydırma bu yüzden kalktı). Gruplar da açılışta 10'ar saniye kaydırılır. Bir turda
+biriken hatalar tur sonunda birlikte fırlatılır; böylece konsolda ve `?func=getjobs`'ta grup
+kırmızı görünür, ama bir sistemin düşmesi diğerlerinin turunu götürmez.
+
+`?func=getjobs` hem grupları (periyot, son koşu, son hata) hem de job'ları listeler; her job
+`enabledFor` ile hangi sistemlerde açık olduğunu söyler. `?func=reloadconfig` KKCONFIG'i
+yeniden okur; **yalnız periyot değişikliği** rebind gerektirir, flag ve eşikler zaten her turda
+okunur.
 
 ## Konfigürasyon okuma
 
 Dispatcher config'i **bellekten** okur (`system_cfg.cfgs`), Java `EnvConfig` gibi.
-`configWatch` 5 dakikada bir tazeler; anında etki için `?func=reloadconfig`.
+`config_watch` 5 dakikada bir tazeler; anında etki için `?func=reloadconfig`.
 Bir config değişikliği en geç bir `config_refresh_ms` sonra istekleri etkiler.
 
 ## İstek logu

@@ -10,23 +10,10 @@ class TblValidatorErrorTdDaoImpl extends BaseDao {
         + '(TD_DATA, ERROR_MESSAGE, ERROR_CODE, SYSTEM_ID, BUS_ID, STATION_TYPE, REQUEST_URL) '
         + 'VALUES (:td_data, :error_message, :error_code, :system_id, :bus_id, :station_type, :request_url)';
 
-    // Grouped rather than listed: the job reports how many of each kind arrived, and the
-    // CLOB payload of every row would be far too much to carry into a log line.
-    countSinceSql = 'SELECT ERROR_CODE, COUNT(*) CNT FROM TBL_VALIDATOR_ERROR_TD '
-        + 'WHERE CREATION_DATE >= :since GROUP BY ERROR_CODE ORDER BY ERROR_CODE';
-
     // ROWNUM caps one round so a first run against years of rows cannot hold a long
     // transaction open; the caller repeats on the next tick if there is more.
     purgeSql = 'DELETE FROM TBL_VALIDATOR_ERROR_TD WHERE CREATION_DATE < SYSDATE - :days '
         + 'AND ROWNUM <= :batch_rows';
-
-    async countSince(conn, since, sessionId) {
-        const binds = { since };
-        this.debugSql(this.countSinceSql, binds, sessionId);
-        const result = await conn.execute(this.countSinceSql, binds,
-            { outFormat: this.oracledb.OUT_FORMAT_OBJECT });
-        return result.rows || [];
-    }
 
     /** Autocommit is left on: a retention round commits by itself, as the roadmap asks. */
     async purge(conn, days, batchRows, sessionId) {

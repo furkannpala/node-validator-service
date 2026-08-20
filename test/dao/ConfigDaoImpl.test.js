@@ -75,7 +75,7 @@ describe('request config', () => {
         system_cfg.setCfgs({ app: {}, '017': { a: 1 } });
         assert.strictEqual(dispatcher.derivedFor('017').cfg.a, 1);
 
-        // What configWatch and ?func=reloadconfig do; a stale view here would pin the service
+        // What config_watch and ?func=reloadconfig do; a stale view here would pin the service
         // to the configuration it booted with.
         system_cfg.setCfgs({ app: {}, '017': { a: 2 } });
         assert.strictEqual(dispatcher.derivedFor('017').cfg.a, 2);
