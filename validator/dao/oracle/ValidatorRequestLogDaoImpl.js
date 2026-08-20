@@ -11,18 +11,6 @@ class ValidatorRequestLogDaoImpl extends BaseDao {
         + '(BUS_ID,SAM_ID,FUNC_NAME,REQ_URL,REQ_XML,CREATED_AT,PDATE) '
         + 'VALUES(:bus_id,:sam_id,:func_name,:req_url,:req_xml,CURRENT_DATE,TRUNC(CURRENT_DATE))';
 
-    purgeSql = 'DELETE FROM VALIDATOR_REQUEST_LOG WHERE CREATED_AT < SYSDATE - :days '
-        + 'AND ROWNUM <= :batch_rows';
-
-    /** One capped round, committed on its own; the job repeats it while there is more. */
-    async purge(conn, days, batchRows, sessionId) {
-        const binds = { days, batch_rows: batchRows };
-        this.debugSql(this.purgeSql, binds, sessionId);
-        const result = await conn.execute(this.purgeSql, binds);
-        const deleted = result.rowsAffected || 0;
-        return { deleted, more: deleted >= batchRows };
-    }
-
     /** Java logged a failure and carried on: the request itself must not depend on its log. */
     async insert(conn, data, sessionId) {
         const binds = {

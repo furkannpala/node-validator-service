@@ -1,13 +1,9 @@
 /* eslint-env mocha */
 const assert = require('assert');
 
-const jobs = require('../../jobs');
-const { JOBS } = jobs;
+const { JOBS } = require('../../jobs');
 const { JobManager, mapWithConcurrency, GROUP_STAGGER_MS } = require('../../jobs/JobManager');
 const FileCacheManager = require('../../util/FileCacheManager');
-const SqliteBuilder = require('../../util/SqliteBuilder');
-const requestLogDao = require('../../validator/dao/oracle/ValidatorRequestLogDaoImpl');
-const errorTdDao = require('../../validator/dao/oracle/TblValidatorErrorTdDaoImpl');
 const { fakeConn } = require('../fakeConn');
 
 /** A stand-in for system_cfg with the same three-step lookup: system -> app -> default. */
@@ -53,9 +49,14 @@ const APP_ONLY = () => ({ app: {} });
 const job = (name) => JOBS.find((j) => j.name === name);
 
 /**
- * The job bodies call the util and dao singletons directly, the way node-abt-terminal's do.
- * Each case swaps in what it wants to observe and this puts the real ones back.
+ * Both shipped jobs are service-wide, but scope/requires/mode are the runner's contract and
+ * the next job to arrive will use them, so those paths are exercised with jobs made here.
  */
+function systemJob(name, func, extra = {}) {
+    return { name, scope: 'system', flag: `run_${name}`, intervalMs: 1000, func, ...extra };
+}
+
+/** The job bodies call the util singletons directly; this puts the real ones back. */
 function stub(target, key, fn) {
     const original = target[key];
     target[key] = fn;
@@ -70,16 +71,21 @@ afterEach(() => {
 describe('job scheduling', () => {
     it('gives every job a group and puts jobs of one period together', async () => {
         const manager = managerOf(APP_ONLY());
-        const groups = await manager.start(JOBS);
-        manager.groups = groups;
+        manager.groups = await manager.start(JOBS);
 
-        const named = groups.map((g) => g.jobs.join('|'));
-        assert.deepStrictEqual(named,
-            ['config_watch', 'cache_cleanup|request_log_retention', 'sqlite_refresh'],
-            'the two hourly jobs share one scheduler');
-        assert.strictEqual(groups.length, manager.scheduled.length);
+        assert.deepStrictEqual(manager.groups.map((g) => g.jobs.join('|')),
+            ['config_watch', 'cache_cleanup'], 'the two periods differ, so two schedulers');
+        assert.strictEqual(manager.groups.length, manager.scheduled.length);
         assert.deepStrictEqual(
             JOBS.map((j) => Boolean(manager.groupOf(j.name))), JOBS.map(() => true));
+    });
+
+    it('puts jobs that share a period in one group, in JOBS order', async () => {
+        const manager = managerOf({ app: { cache_cleanup_interval_ms: 5 * 60 * 1000 } });
+        const groups = await manager.start(JOBS);
+
+        assert.deepStrictEqual(groups.map((g) => g.jobs.join('|')), ['config_watch|cache_cleanup']);
+        assert.strictEqual(manager.scheduled.length, 1, 'one scheduler, so no overlap either');
     });
 
     it('staggers the first run of each group so they do not collide on startup', async () => {
@@ -87,7 +93,7 @@ describe('job scheduling', () => {
         await manager.start(JOBS);
 
         const offsets = manager.scheduled.map((h) => h.delayMs - h.rateMs);
-        assert.deepStrictEqual(offsets, [0, GROUP_STAGGER_MS, GROUP_STAGGER_MS * 2]);
+        assert.deepStrictEqual(offsets, [0, GROUP_STAGGER_MS]);
     });
 
     it('takes the period from the app row and falls back on an unusable value', async () => {
@@ -96,16 +102,11 @@ describe('job scheduling', () => {
             assert.strictEqual(manager.intervalOf(job('config_watch')),
                 job('config_watch').intervalMs, `value ${bad}`);
         }
-        const manager = managerOf({ app: { config_refresh_ms: 60000 }, '017': { config_refresh_ms: 1000 } });
+        const manager = managerOf({
+            app: { config_refresh_ms: 60000 }, '017': { config_refresh_ms: 1000 },
+        });
         assert.strictEqual(manager.intervalOf(job('config_watch')), 60000,
             'a system row does not move a service-wide period');
-    });
-
-    it('regroups when a changed period pulls a job out of its group', async () => {
-        const manager = managerOf({ app: { retention_interval_ms: 5 * 60 * 1000 } });
-        const groups = await manager.start(JOBS);
-        assert.deepStrictEqual(groups.map((g) => g.jobs.join('|')),
-            ['config_watch|request_log_retention', 'cache_cleanup', 'sqlite_refresh']);
     });
 
     it('stops every group it armed', async () => {
@@ -119,32 +120,11 @@ describe('job scheduling', () => {
 });
 
 describe('job flags', () => {
-    it('keeps the two housekeeping jobs on with no config at all', () => {
+    it('keeps both housekeeping jobs on with no config at all', () => {
         const manager = managerOf(APP_ONLY());
         const ctx = manager.contextFor('app', 'test');
         assert.strictEqual(manager.isEnabled(job('config_watch'), ctx), true);
         assert.strictEqual(manager.isEnabled(job('cache_cleanup'), ctx), true);
-    });
-
-    it('leaves the two that touch data or cost minutes off until asked', () => {
-        const manager = managerOf({ app: {}, '017': {} });
-        const ctx = manager.contextFor('017', 'test');
-        assert.strictEqual(manager.isEnabled(job('sqlite_refresh'), ctx), false);
-        assert.strictEqual(manager.isEnabled(job('request_log_retention'), ctx), false);
-    });
-
-    it('reads a flag per cycle, so one system can have it on and another off', () => {
-        const manager = managerOf({ app: {}, '017': { run_sqlite_refresh: true }, '026': {} });
-        assert.strictEqual(
-            manager.isEnabled(job('sqlite_refresh'), manager.contextFor('017', 'test')), true);
-        assert.strictEqual(
-            manager.isEnabled(job('sqlite_refresh'), manager.contextFor('026', 'test')), false);
-    });
-
-    it("takes the string 'true' a JSON CLOB may carry", () => {
-        const manager = managerOf({ app: { run_sqlite_refresh: 'true' }, '017': {} });
-        assert.strictEqual(
-            manager.isEnabled(job('sqlite_refresh'), manager.contextFor('017', 'test')), true);
     });
 
     it('turns a default-on job off when the key says so', () => {
@@ -152,95 +132,126 @@ describe('job flags', () => {
         assert.strictEqual(
             manager.isEnabled(job('cache_cleanup'), manager.contextFor('app', 'test')), false);
     });
+
+    it('leaves a job with no defaultOn off until it is asked for', () => {
+        const manager = managerOf({ app: {}, '017': {} });
+        const later = systemJob('later', async () => {});
+        assert.strictEqual(manager.isEnabled(later, manager.contextFor('017', 'test')), false);
+    });
+
+    it('reads a flag per cycle, so one system can have it on and another off', () => {
+        const manager = managerOf({ app: {}, '017': { run_later: true }, '026': {} });
+        const later = systemJob('later', async () => {});
+        assert.strictEqual(manager.isEnabled(later, manager.contextFor('017', 'test')), true);
+        assert.strictEqual(manager.isEnabled(later, manager.contextFor('026', 'test')), false);
+    });
+
+    it("takes the string 'true' a JSON CLOB may carry", () => {
+        const manager = managerOf({ app: { run_later: 'true' }, '017': {} });
+        assert.strictEqual(
+            manager.isEnabled(systemJob('later', async () => {}), manager.contextFor('017', 'test')),
+            true);
+    });
 });
 
 describe('a cycle', () => {
-    it('runs a service job once and a system job once per system', async () => {
-        const manager = managerOf({ app: { run_sqlite_refresh: true }, '017': {}, '026': {} });
+    it('runs a service job once however many systems are configured', async () => {
+        const manager = managerOf({ app: {}, '017': {}, '026': {} });
         const seen = [];
         stub(FileCacheManager, 'removeExpired', async () => { seen.push('cache'); return 0; });
-        stub(SqliteBuilder, 'buildRouteInfo', async () => seen.push('route'));
-        stub(SqliteBuilder, 'buildFreeCard', async () => seen.push('freeCard'));
 
-        await manager.run([job('cache_cleanup'), job('sqlite_refresh')], 'test');
-        assert.deepStrictEqual(seen, ['cache', 'route', 'freeCard', 'route', 'freeCard']);
+        await manager.run([job('cache_cleanup')], 'test');
+        assert.deepStrictEqual(seen, ['cache']);
+    });
+
+    it('runs a system job once per system, and not for the app row', async () => {
+        const manager = managerOf({ app: { run_later: true }, '017': {}, '026': {} });
+        const seen = [];
+        await manager.run([systemJob('later', async (ctx) => seen.push(ctx.systemId))], 'test');
+        assert.deepStrictEqual(seen, ['017', '026']);
+    });
+
+    it('runs the service pass before the system pass so config_watch goes first', async () => {
+        const manager = managerOf({ app: { run_later: true }, '017': {} });
+        const order = [];
+        manager.reloadConfig = async () => { order.push('config'); return []; };
+
+        await manager.run(
+            [systemJob('later', async () => order.push('later')), job('config_watch')], 'test');
+        assert.deepStrictEqual(order, ['config', 'later'],
+            'JOBS order does not put a system job ahead of the config refresh');
     });
 
     it('skips a job whose flag is off without touching anything', async () => {
         const manager = managerOf({ app: {}, '017': {} });
         let called = false;
-        stub(SqliteBuilder, 'buildRouteInfo', async () => { called = true; });
-        await manager.run([job('sqlite_refresh')], 'test');
+        await manager.run([systemJob('later', async () => { called = true; })], 'test');
         assert.strictEqual(called, false);
     });
 
     it('refuses to run a job whose required config is missing, and says so', async () => {
-        const manager = managerOf({ app: {}, '017': { run_retention: true } });
-        let purged = false;
-        stub(requestLogDao, 'purge', async () => { purged = true; return { deleted: 0 }; });
+        const manager = managerOf({ app: {}, '017': { run_later: true } });
+        let called = false;
+        const later = systemJob('later', async () => { called = true; }, { requires: ['later_days'] });
 
-        await assert.rejects(() => manager.run([job('request_log_retention')], 'test'),
-            /missing config \[request_log_retention_days\]/);
-        assert.strictEqual(purged, false, 'no deletion with no period to delete by');
+        await assert.rejects(() => manager.run([later], 'test'), /missing config \[later_days\]/);
+        assert.strictEqual(called, false, 'a half-configured job does not get to run');
     });
 
     it('keeps going when one system fails and reports every failure together', async () => {
-        const manager = managerOf({
-            app: { run_sqlite_refresh: true }, '017': {}, '026': {}, '030': {},
-        });
+        const manager = managerOf({ app: { run_later: true }, '017': {}, '026': {}, '030': {} });
         const asked = [];
-        stub(SqliteBuilder, 'buildRouteInfo', async () => {
-            asked.push('route');
-            if (asked.length === 1) throw new Error('ORA-00942');
+        const later = systemJob('later', async (ctx) => {
+            asked.push(ctx.systemId);
+            if (ctx.systemId === '017') throw new Error('ORA-00942');
         });
-        stub(SqliteBuilder, 'buildFreeCard', async () => {});
 
-        await assert.rejects(() => manager.run([job('sqlite_refresh')], 'test'),
-            /sqlite_refresh error, 017: ORA-00942/);
-        assert.strictEqual(asked.length, 3, 'the other two systems were still served');
+        await assert.rejects(() => manager.run([later], 'test'), /later error, 017: ORA-00942/);
+        assert.deepStrictEqual(asked, ['017', '026', '030'], 'the other two were still served');
     });
 
-    it('runs the service pass before the system pass so config_watch goes first', async () => {
-        const manager = managerOf({ app: { run_sqlite_refresh: true }, '017': {} });
+    it('lets an async job run alongside the sync ones and still collects its failure', async () => {
+        const manager = managerOf({ app: { run_slow: true, run_quick: true }, '017': {} });
         const order = [];
-        manager.reloadConfig = async () => { order.push('config'); return []; };
-        stub(SqliteBuilder, 'buildRouteInfo', async () => order.push('route'));
-        stub(SqliteBuilder, 'buildFreeCard', async () => {});
+        const slow = systemJob('slow', async () => {
+            order.push('slow start');
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            order.push('slow end');
+            throw new Error('boom');
+        }, { mode: 'async' });
+        const quick = systemJob('quick', async () => { order.push('quick'); });
 
-        await manager.run([job('sqlite_refresh'), job('config_watch')], 'test');
-        assert.deepStrictEqual(order, ['config', 'route'],
-            'JOBS order does not put a system job ahead of the config refresh');
+        await assert.rejects(() => manager.run([slow, quick], 'test'), /slow error, 017: boom/);
+        assert.deepStrictEqual(order, ['slow start', 'quick', 'slow end'],
+            'the sync job did not wait for the async one');
     });
 
     it('opens one connection per system and closes it whatever happens', async () => {
-        const manager = managerOf({ app: { run_sqlite_refresh: true }, '017': {}, '026': {} });
+        const manager = managerOf({ app: { run_later: true }, '017': {}, '026': {} });
         const opened = [];
         const closed = [];
         manager.deps.getConnection = async (alias) => {
             opened.push(alias);
             return Object.assign(fakeConn(), { close: async () => { closed.push(alias); } });
         };
-        stub(SqliteBuilder, 'buildRouteInfo', async () => { throw new Error('ORA-00942'); });
-        stub(SqliteBuilder, 'buildFreeCard', async () => {});
+        const later = systemJob('later', (ctx) => ctx.withConnection(async () => {
+            throw new Error('ORA-00942');
+        }));
 
-        await assert.rejects(() => manager.run([job('sqlite_refresh')], 'test'));
+        await assert.rejects(() => manager.run([later], 'test'));
         assert.deepStrictEqual(opened, ['017', '026']);
         assert.deepStrictEqual(closed, ['017', '026'], 'the failing round still gave it back');
     });
 
     it('applies datasource_prefix to the pool alias, as a request does', async () => {
-        const manager = managerOf({
-            app: { run_sqlite_refresh: true, datasource_prefix: 'val_' }, '017': {},
-        });
+        const manager = managerOf({ app: { run_later: true, datasource_prefix: 'val_' }, '017': {} });
         const opened = [];
         manager.deps.getConnection = async (alias) => {
             opened.push(alias);
             return Object.assign(fakeConn(), { close: async () => {} });
         };
-        stub(SqliteBuilder, 'buildRouteInfo', async () => {});
-        stub(SqliteBuilder, 'buildFreeCard', async () => {});
 
-        await manager.run([job('sqlite_refresh')], 'test');
+        await manager.run([systemJob('later', (ctx) => ctx.withConnection(async () => {}))], 'test');
         assert.deepStrictEqual(opened, ['val_017']);
     });
 });
@@ -263,43 +274,6 @@ describe('cache_cleanup', () => {
 
         await job('cache_cleanup').func(manager.contextFor('app', 'test'));
         assert.strictEqual(asked, 24 * 60 * 60 * 1000);
-    });
-});
-
-describe('request_log_retention', () => {
-    function purgeRecorder(calls) {
-        return async (conn, days, batchRows) => {
-            calls.push({ days, batchRows });
-            return { deleted: 5, more: false };
-        };
-    }
-
-    it('purges both tables with the configured period and batch size', async () => {
-        const manager = managerOf({
-            app: {}, '017': { run_retention: true, request_log_retention_days: 30, retention_batch_rows: 100 },
-        });
-        const requestLog = [];
-        const errorTd = [];
-        stub(requestLogDao, 'purge', purgeRecorder(requestLog));
-        stub(errorTdDao, 'purge', purgeRecorder(errorTd));
-
-        await manager.run([job('request_log_retention')], 'test');
-        assert.deepStrictEqual(requestLog, [{ days: 30, batchRows: 100 }]);
-        assert.deepStrictEqual(errorTd, [{ days: 30, batchRows: 100 }],
-            'error records follow the request log when they have no period of their own');
-    });
-
-    it('keeps a separate period for the error records', async () => {
-        const manager = managerOf({
-            app: { run_retention: true, request_log_retention_days: 30, error_td_retention_days: 180 },
-            '017': {},
-        });
-        const errorTd = [];
-        stub(requestLogDao, 'purge', async () => ({ deleted: 0 }));
-        stub(errorTdDao, 'purge', purgeRecorder(errorTd));
-
-        await manager.run([job('request_log_retention')], 'test');
-        assert.deepStrictEqual(errorTd, [{ days: 180, batchRows: jobs.DEFAULT_BATCH_ROWS }]);
     });
 });
 

@@ -10,20 +10,6 @@ class TblValidatorErrorTdDaoImpl extends BaseDao {
         + '(TD_DATA, ERROR_MESSAGE, ERROR_CODE, SYSTEM_ID, BUS_ID, STATION_TYPE, REQUEST_URL) '
         + 'VALUES (:td_data, :error_message, :error_code, :system_id, :bus_id, :station_type, :request_url)';
 
-    // ROWNUM caps one round so a first run against years of rows cannot hold a long
-    // transaction open; the caller repeats on the next tick if there is more.
-    purgeSql = 'DELETE FROM TBL_VALIDATOR_ERROR_TD WHERE CREATION_DATE < SYSDATE - :days '
-        + 'AND ROWNUM <= :batch_rows';
-
-    /** Autocommit is left on: a retention round commits by itself, as the roadmap asks. */
-    async purge(conn, days, batchRows, sessionId) {
-        const binds = { days, batch_rows: batchRows };
-        this.debugSql(this.purgeSql, binds, sessionId);
-        const result = await conn.execute(this.purgeSql, binds);
-        const deleted = result.rowsAffected || 0;
-        return { deleted, more: deleted >= batchRows };
-    }
-
     /** Java swallowed a failure here: losing the error record must not mask the first error. */
     async insertErrorTd(conn, data, sessionId) {
         try {

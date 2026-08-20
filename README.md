@@ -29,7 +29,7 @@ node-app-server/
 | `strategy/` | `senddata`'nın üç yolu (otobüs, istasyon, tchew) + kayıt tipi alt stratejileri; `visitor/` F kaydının travel_type dallarını taşır |
 | `util/` | FileCacheManager, RequestStats, HttpUtil/KpgClient, XmlWalk, SqliteBuilder — veritabanına dokunmaz |
 | `constant/` | Java'dan birebir taşınan hata kodları ve sabitler |
-| `jobs/` | `index.js`'teki `JOBS` dizisi (4 job) + generic runner `JobManager` |
+| `jobs/` | `index.js`'teki `JOBS` dizisi (2 job) + generic runner `JobManager` |
 | `management/` | `?func=getversion`, `getconfig`, `getjobs`, `reloadconfig` |
 | `test/` | Mocha; `test/architecture.test.js` DAO katmanı kuralını zorlar |
 
@@ -59,7 +59,7 @@ karşılar.
 
 ## Migrasyon durumu
 
-Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 endpoint (13 controller dosyası), 45 Oracle DAO, 10 SQLite DAO, 4 job, 3 strateji, 4 bean, 358 test.
+Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 endpoint (13 controller dosyası), 45 Oracle DAO, 10 SQLite DAO, 2 job, 3 strateji, 4 bean, 358 test.
 (Ayrıca `oracle/` altında DAO olmayan 2 yardımcı: `tdSql.js` SQL builder, `apcBind.js` ortak projeksiyon.)
 
 **DAO sayısı neden Java'nın 9'undan fazla:** Java'da 9 DAO sınıfı vardı ama tüm SQL'in
@@ -142,8 +142,7 @@ Yani sorun Node değil, tek süreç. Üç süreçle Java'yı yakalıyor, yük ar
 
 **Çok süreçli kurulumda `VS_AUTOSTART=0` şart.** Job katmanı her süreçte ayrı ayrı başlıyor:
 üç süreç çalıştırıldığında `config_watch` ve `cache_cleanup` üçünde birden kayıtlı oldu.
-`request_log_retention` açıksa üç süreç aynı satırları aynı anda silmeye kalkar, `cache_cleanup`
-aynı dosyaları üç kez tarar. Doğru kurulum: **yalnız bir süreç job'ları çalıştırır**, diğerleri
+`cache_cleanup` aynı dosyaları üç kez tarar, `config_watch` config tablosunu üç kez okur. Doğru kurulum: **yalnız bir süreç job'ları çalıştırır**, diğerleri
 `VS_AUTOSTART=0` ile kalkar (doğrulandı: job sayısı 0, endpoint'ler normal çalışıyor).
 
 Her süreç kendi Oracle havuzunu açtığı için toplam bağlantı = süreç sayısı × `poolSize`;
@@ -245,12 +244,10 @@ sistem döngüsü `JobManager` içinde tek yerde.
 |---|---|---|---|---:|---|
 | `config_watch` | service | `run_config_watch` | `config_refresh_ms` | 5 dk | açık |
 | `cache_cleanup` | service | `run_cache_cleanup` | `cache_cleanup_interval_ms` + `cache_max_age_ms` | 1 sa / 1 gün | açık |
-| `sqlite_refresh` | system (async) | `run_sqlite_refresh` | `sqlite_refresh_interval_ms` | 30 dk | **kapalı** |
-| `request_log_retention` | system | `run_retention` | `retention_interval_ms` + `request_log_retention_days` + `error_td_retention_days` + `retention_batch_rows` | 1 sa / — / 5000 | **kapalı** |
 
-`request_log_retention` veri sildiği için gün sayısı `requires` listesindedir: flag açık ama
-`request_log_retention_days` boşsa job çalışmaz, hata kaydeder. `error_td_retention_days`
-verilmezse istek logunun süresini izler.
+Kalan iki job da servis geneli. `scope: "system"`, `requires` ve `mode: "async"` runner'ın
+sözleşmesinde duruyor — sistem başına koşan bir job eklendiğinde diziye bir girdi yetiyor;
+testler bu yolları sentetik job'larla doğruluyor.
 
 **Aynı periyoda sahip job'lar tek scheduler'da gruplanır** ve grup içinde sırayla koşar —
 `queueMax=1` havuzlarda aynı anda connection istememelerinin yolu budur (eski `STAGGER_STEP_MS`

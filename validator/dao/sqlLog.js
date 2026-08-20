@@ -1,40 +1,11 @@
 const { ULog } = require("../../../../lib/utils");
 
-/**
- * The statement trace every DAO runs before an execute, and the masking that decides what may
- * appear in it. The two belong together: the trace is the only thing that reads a bind object
- * on the log path, and the masking exists only because of the trace.
- *
- * It is not cheap. ULog has no level of its own, so every call formats the line, writes it to
- * stdout synchronously and sends a UDP packet to ELK — and the masked bind text is built before
- * it. Measured on senddata with eight concurrent requests: 105 requests/s with the trace, 161
- * without it, so it costs about a third of the throughput on the write path.
- *
- * On by default, because losing the trace silently would be worse than the cost. VS_SQL_DEBUG=0
- * turns it off, and then the masking is not computed either — that is the point of the guard
- * living here rather than inside ULog.
- */
 const ENABLED = process.env.VS_SQL_DEBUG !== "0";
 
-/**
- * B-17. Every DAO logs its binds and ULog.sendLog only scrubs `password`, so card numbers were
- * accumulating in the central ELK over UDP.
- *
- * This runs on the LOG path only: the bind object handed to the database is never modified,
- * masking always works on a copy.
- */
-
-/** Fully hidden: these are useless to us in a log line anyway. */
 const REDACT_KEYS = new Set([
     "ptcn", "enc_pan", "emv", "track2", "cvv", "pin", "pin_block",
 ]);
 
-/**
- * PAN-like fields: first 6 + last 4 are kept, the form PCI-DSS permits.
- *
- * Several of these are not bound by any statement today. They stay anyway: an unused key costs
- * a Set lookup, a missing one puts a card number on the wire.
- */
 const PAN_KEYS = new Set([
     "card_no", "alias_no", "masked_pan", "pan", "old_card_no", "origin_card_no",
 ]);
