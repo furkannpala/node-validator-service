@@ -1,7 +1,7 @@
 const assert = require('assert');
 const dao = require('../../validator/dao/oracle/TchewTdDaoImpl');
 const TchewDataStrategy = require('../../strategy/TchewDataStrategy');
-const DataTransaction = require('../../bean/DataTransaction');
+const DataTransaction = require('../../validator/transaction/DataTransaction');
 const { fakeConn } = require('../fakeConn');
 
 /**

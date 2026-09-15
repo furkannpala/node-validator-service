@@ -1,7 +1,7 @@
 const assert = require('assert');
 const DRecordStrategy = require('../../strategy/DRecordStrategy');
 const { fakeConn } = require('../fakeConn');
-const DataTransaction = require('../../bean/DataTransaction');
+const DataTransaction = require('../../validator/transaction/DataTransaction');
 
 const CFG = { currencyMultiplier: 100, systemId: '017', cardTypeCheckList: ['99'], saveExtendedFare: false };
 

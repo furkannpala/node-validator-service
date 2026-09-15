@@ -98,7 +98,7 @@ describe('kafka produce', () => {
             second.cfg = { ...cfg, sendcfg_kafka_error_throw: 'true' };
             const err = await run(sendCfg, second, makeRes());
             assert.ok(err && err.code === -99999, 'expected the Java kafka error code');
-            assert.ok(err.message.startsWith('Kakfka Error:'), err.message);
+            assert.ok(err.message.startsWith('Kafka Error: '), err.message);
         });
     });
 

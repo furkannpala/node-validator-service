@@ -5,7 +5,7 @@
  * validator/index.js registers them straight from there.
  */
 const { ValidatorControllerBase } = require("../ValidatorControllerBase");
-const GpsTransaction = require("../../bean/GpsTransaction");
+const GpsTransaction = require("../transaction/GpsTransaction");
 const StringUtil = require("../../util/StringUtil");
 const XmlWalk = require("../../util/XmlWalk");
 const { isUniqueViolation } = require("../dao/daoUtil");
@@ -61,8 +61,7 @@ class SendGps extends ValidatorControllerBase {
                     trx.applyAttrs(element.attrs);
                     // Produced before the clock check, which lives on the database side only.
                     if (toKafka) {
-                        await this.produceKafka(req, "sendgps", trx.toKafkaGpsPayload(),
-                            trx.sam_id, "Kafka Error:");
+                        await this.produceKafka(req, "sendgps", trx.toKafkaGpsPayload(), trx.sam_id);
                     }
                     if (dbEnabled) await this.storeGpsdat(req, trx, horizon);
                 } else if (element.name === "CANDAT") {
@@ -142,8 +141,7 @@ class SendGps extends ValidatorControllerBase {
                     () => this.canDataDao.insert(req.dbConn, can, req.sessionId));
             }
             if (toKafka) {
-                await this.produceKafka(req, "sendgps", trx.toKafkaCanPayload(can),
-                    can.bus_id, "Kafka Error: ");
+                await this.produceKafka(req, "sendgps", trx.toKafkaCanPayload(can), can.bus_id);
             }
         }
     }

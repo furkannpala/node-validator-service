@@ -68,17 +68,17 @@ describe('request config', () => {
 
     it('hands every request of a system the same view instead of rebuilding it', () => {
         system_cfg.setCfgs({ app: {}, '017': { a: 1 } });
-        assert.strictEqual(dispatcher.derivedFor('017'), dispatcher.derivedFor('017'));
+        assert.strictEqual(dispatcher.systemViewFor('017'), dispatcher.systemViewFor('017'));
     });
 
     it('drops the view when the config is reloaded', () => {
         system_cfg.setCfgs({ app: {}, '017': { a: 1 } });
-        assert.strictEqual(dispatcher.derivedFor('017').cfg.a, 1);
+        assert.strictEqual(dispatcher.systemViewFor('017').cfg.a, 1);
 
         // What config_watch and ?func=reloadconfig do; a stale view here would pin the service
         // to the configuration it booted with.
         system_cfg.setCfgs({ app: {}, '017': { a: 2 } });
-        assert.strictEqual(dispatcher.derivedFor('017').cfg.a, 2);
+        assert.strictEqual(dispatcher.systemViewFor('017').cfg.a, 2);
     });
 
     it('reads save_request_log_functions once per system, kafka-only funcs removed', () => {
@@ -87,7 +87,7 @@ describe('request config', () => {
             '017': { save_request_log_functions: ' senddata , sendgps ',
                 sendgps_use_only_kafka_produce: 'true' },
         });
-        const { requestLogFuncs } = dispatcher.derivedFor('017');
+        const { requestLogFuncs } = dispatcher.systemViewFor('017');
 
         assert.strictEqual(requestLogFuncs.has('senddata'), true);
         // With no database write there is nothing for a request log row to correlate with.

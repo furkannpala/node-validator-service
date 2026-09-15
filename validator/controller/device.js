@@ -5,9 +5,9 @@
  * validator/index.js registers them straight from there.
  */
 const { ValidatorControllerBase } = require("../ValidatorControllerBase");
-const CfgTransaction = require("../../bean/CfgTransaction");
+const CfgTransaction = require("../transaction/CfgTransaction");
 const { isUniqueViolation } = require("../dao/daoUtil");
-const LogTransaction = require("../../bean/LogTransaction");
+const LogTransaction = require("../transaction/LogTransaction");
 const XmlRpc = require("../../util/XmlRpc");
 
 
@@ -38,8 +38,7 @@ class SendCfg extends ValidatorControllerBase {
                 trx.applyAttrs(element.attrs);
                 if (trx.bus_id == null) continue;
                 if (toKafka) {
-                    await this.produceKafka(req, "sendcfg", trx.toKafkaPayload(), trx.sam_id,
-                        "Kakfka Error:");   // Java's spelling at this call site
+                    await this.produceKafka(req, "sendcfg", trx.toKafkaPayload(), trx.sam_id);
                 }
                 if (!dbEnabled) continue;
                 await this.storeOne(req, trx);
@@ -103,8 +102,7 @@ class SendLog extends ValidatorControllerBase {
                 // The produce runs before the scope guard: Java sent a message for every
                 // element in the body, including the LOG one that carries no entry.
                 if (toKafka) {
-                    await this.produceKafka(req, "sendlog", trx.toKafkaPayload(), trx.bus_id,
-                        "Kafka Error: ");
+                    await this.produceKafka(req, "sendlog", trx.toKafkaPayload(), trx.bus_id);
                 }
                 if (!dbEnabled) continue;
                 // Java's only guard, and it applied to every element, not just DATA.

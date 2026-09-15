@@ -1,5 +1,5 @@
-const StringUtil = require('../util/StringUtil');
-const { gson } = require('../util/Gson');
+const StringUtil = require('../../util/StringUtil');
+const { gson } = require('../../util/Gson');
 
 const FIELDS = [
     'bus_id', 'date_time', 'latitude', 'nsindicator', 'longitude', 'ewindicator', 'altitude',

@@ -113,16 +113,16 @@ function isKafkaOnly(cfg, func) {
  * req.cfg is shared between requests from here on. Nothing writes to it: the controllers read
  * it through ValidatorControllerBase.cfg() and never assign.
  */
-const derived = new Map();   // systemId -> { cfg, requestLogFuncs }
-let derivedRevision = -1;
+const viewsBySystem = new Map();   // systemId -> { cfg, requestLogFuncs }
+let viewsRevision = -1;
 
-function derivedFor(systemId) {
-    if (derivedRevision !== system_cfg.revision) {
-        derived.clear();
-        derivedRevision = system_cfg.revision;
+function systemViewFor(systemId) {
+    if (viewsRevision !== system_cfg.revision) {
+        viewsBySystem.clear();
+        viewsRevision = system_cfg.revision;
     }
     const key = String(systemId);
-    let view = derived.get(key);
+    let view = viewsBySystem.get(key);
     if (!view) {
         const cfg = configFor(systemId);
         const configured = configValue(cfg, "save_request_log_functions");
@@ -132,7 +132,7 @@ function derivedFor(systemId) {
             requestLogFuncs: new Set(list.map((f) => String(f).trim().toLowerCase())
                 .filter((f) => f !== "" && !isKafkaOnly(cfg, f))),
         };
-        derived.set(key, view);
+        viewsBySystem.set(key, view);
     }
     return view;
 }
@@ -232,9 +232,8 @@ module.exports = {
             if (!Object.prototype.hasOwnProperty.call(controller, func)) {
                 return next(new ServiceError(-9, "unrecognized func " + func));
             }
-            const view = derivedFor(res.locals.systemId);
+            const view = systemViewFor(res.locals.systemId);
             req.cfg = view.cfg;
-            // Java carried the id on SystemConfig; the kafka producer cache is keyed by it.
             req.systemId = res.locals.systemId;
 
             if (view.requestLogFuncs.has(func)) {
@@ -275,4 +274,4 @@ module.exports.controller = controller;
 module.exports.configFor = configFor;
 // Exported for the tests: the cached view is what a request actually gets, so its invalidation
 // is the thing worth asserting, not the layering configFor does underneath it.
-module.exports.derivedFor = derivedFor;
+module.exports.systemViewFor = systemViewFor;

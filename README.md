@@ -1,297 +1,466 @@
 # node-validator-service
 
-ValidatorServices (Java WAR, v5.92.0) migrasyonunun Node.js karşılığı.
-Bu bir **webapp**'tir, bağımsız bir servis değil: `node-app-server/webapps/` altına
-klonlanır ve tüm bağımlılıklarını (oracledb, moment, xml-js, ULog, connection pool)
-parent projeden alır. Bu yüzden kendi `package.json` dosyası yoktur.
+Otobüs ve istasyonlardaki validator cihazlarının konuştuğu HTTP servisi. Cihaz açılışta
+ihtiyacı olan referans verisini (hat, güzergâh, durak, tarife, kara liste, sürücü planı) bu
+servisten indirir; gün boyunca ürettiği bilet/sefer kayıtlarını, GPS'ini, log ve alarmlarını
+yine buraya yükler. Servis bu isteklerin karşılığını Oracle'a yazar, kimi kayıtları Kafka'ya
+üretir, kredi kartı işlemlerini ödeme geçidine iletir.
 
-## Yerleşim
+Tek bir HTTP ucu vardır ve endpoint `?func=` sorgu parametresiyle seçilir. Cevaplar XML'dir.
+
+---
+
+## İçindekiler
+
+1. [Servis nasıl ayağa kalkar](#1-servis-nasıl-ayağa-kalkar)
+2. [URL şekli ve `systemid`](#2-url-şekli-ve-systemid)
+3. [Dizin yerleşimi](#3-dizin-yerleşimi)
+4. [Bir isteğin yolculuğu](#4-bir-isteğin-yolculuğu)
+5. [Endpoint kataloğu](#5-endpoint-kataloğu)
+6. [`senddata` — en ağır yazma yolu](#6-senddata--en-ağır-yazma-yolu)
+7. [DAO katmanı ve mimari kural](#7-dao-katmanı-ve-mimari-kural)
+8. [Dosya cache'i](#8-dosya-cachei)
+9. [SQLite dosya üretimi](#9-sqlite-dosya-üretimi)
+10. [Kafka üretimi](#10-kafka-üretimi)
+11. [Job katmanı](#11-job-katmanı)
+12. [`/Admin` uçları](#12-admin-uçları)
+13. [Yapılandırma](#13-yapılandırma)
+14. [Hata kodları](#14-hata-kodları)
+15. [Loglama ve SQL izi](#15-loglama-ve-sql-izi)
+16. [Test](#16-test)
+17. [`tools/` — yerel yardımcılar](#17-tools--yerel-yardımcılar)
+
+---
+
+## 1. Servis nasıl ayağa kalkar
+
+Bu klasör tek başına çalışan bir uygulama değil, `node-app-server` altındaki bir **webapp**'tir.
+Sunucu açılışta `webapps/` altındaki her klasörü tarar, `config/system_cfg.js` dosyasını okur ve
+oradaki `context` değerini URL ön eki olarak kullanarak modülün export ettiği servisleri
+Express router'ına bağlar.
+
+`index.js` iki servis export eder:
+
+```js
+module.exports = [validator, management];   // /Validator  ve  /Admin
+```
+
+Aynı dosya açılışta ayrıca şunları yapar:
+
+- Webapp mount edildikten **sonra** (`setImmediate`) job katmanını başlatır. Böylece yavaş bir
+  config okuması endpoint'lerin ayağa kalkmasını geciktirmez.
+- `SIGINT` / `SIGTERM` sinyallerinde Kafka producer'larını flush edip kapatır.
+
+`VS_AUTOSTART=0` ile job katmanı hiç başlamaz; endpoint'ler normal çalışır. Testler bu modda
+koşar ve **çok süreçli kurulumda bir süreç hariç hepsinde bu şarttır** — aksi hâlde
+`cache_cleanup` aynı dosyaları N kez tarar, `config_watch` config tablosunu N kez okur.
+
+---
+
+## 2. URL şekli ve `systemid`
+
+`context` değeri `"Validator Services"`, servis path'leri `/Validator` ve `Admin`:
 
 ```
-node-app-server/
-  webapps/
-    node-validator-service/   <- bu repo
+GET|POST  /Validator%20Services/Validator?func=<endpoint>&systemid=<sid>&...
+GET|POST  /Validator%20Services/Admin?func=<endpoint>
 ```
 
-## Yapı
+`systemid` (ya da `system_id` / `sid` / `region`) yalnızca hangi endpoint'in ne döneceğini değil,
+**hangi veritabanına bağlanılacağını** da belirler: framework bu değeri `datasource_prefix` ön
+ekiyle birlikte Oracle havuz alias'ı olarak kullanır ve bağlantıyı `req.dbConn` içine koyar.
+`/Validator` `conn: true` ile kayıtlıdır — her istek bir bağlantı alır ve cevap yazıldıktan sonra
+havuza geri verir. `/Admin` `conn: false`'tur, veritabanı bağlantısı almaz.
 
-| Klasör | İçerik |
+Her istek ayrıca bir `req.sessionId` alır (`nodevalidatorservice_<zaman damgası>`); loglarda bir
+isteği baştan sona izlemenin yolu budur.
+
+---
+
+## 3. Dizin yerleşimi
+
+| Yol | İş |
 |---|---|
-| `index.js` | Webapp sözleşmesi: route dizisi export eder (`validator`, `management`) |
-| `config/system_cfg.js` | Route prefix (`Validator Services`) ve KKCONFIG erişimi |
-| `validator/index.js` | Dispatcher — `?func=` anahtarını controller'a bağlar, dosya cache yolunu yürütür |
-| `validator/controller/` | Konuya göre gruplanmış endpoint'ler (`card.js`, `route.js`, `device.js` …); her dosya bir `funcs` tablosu export eder ve **tablonun anahtarları `?func=` değerleridir** |
-| `validator/dao/oracle/` | Oracle: tablo ya da package başına bir dosya |
-| `validator/dao/` | Katmanın ortak parçaları: `BaseDao` (execute + ifade izi), `daoUtil` (transaction sınırı), `sqlLog` (iz + kart maskeleme) |
-| `validator/dao/sqlite/` | Cihaza giden `.db` dosyalarının tabloları (10 DAO + `SqliteDb`) |
-| `validator/daoFactory/` | `oracle` / `sqlite` implementasyon seçimi |
-| `bean/` | XML gövdesini DAO bind objesine çeviren düz veri sınıfları |
-| `strategy/` | `senddata`'nın üç yolu (otobüs, istasyon, tchew) + kayıt tipi alt stratejileri; `visitor/` F kaydının travel_type dallarını taşır |
-| `util/` | FileCacheManager, RequestStats, HttpUtil/KpgClient, XmlWalk, SqliteBuilder — veritabanına dokunmaz |
-| `constant/` | Java'dan birebir taşınan hata kodları ve sabitler |
-| `jobs/` | `index.js`'teki `JOBS` dizisi (2 job) + generic runner `JobManager` |
-| `management/` | `?func=getversion`, `getconfig`, `getjobs`, `reloadconfig` |
-| `test/` | Mocha; `test/architecture.test.js` DAO katmanı kuralını zorlar |
+| `index.js` | Webapp girişi; servisleri export eder, job'ları başlatır, kapanışta Kafka'yı kapatır |
+| `config/system_cfg.js` | `context`, sürüm ve bellekteki config kopyası (`cfgs`, `getSystemConfig`, `setCfgs`) |
+| `constant/` | Hata kodları, sabitler, cihazın gönderdiği kod değerleri, seyahat tipleri |
+| `validator/index.js` | `/Validator` dispatcher'ı: controller yükleme, cache, istek logu, hata sarmalama |
+| `validator/ValidatorControllerBase.js` | Controller taban sınıfı: config okuma, Kafka üretimi, XML gövde okuma, hata çevirimi |
+| `validator/controller/` | 13 dosya, 65 endpoint — konuya göre gruplanmış |
+| `validator/transaction/` | Gelen XML'i alan adlarına çeviren nesneler (`DataTransaction`, `GpsTransaction`, …) |
+| `validator/dao/oracle/` | Oracle DAO'ları — servisteki tek SQL yeri |
+| `validator/dao/sqlite/` | Üretilen `.db` dosyalarına yazan DAO'lar |
+| `validator/daoFactory/` | `daoFactory.get("MstBusDaoImpl")` — sınıf adından DAO çözer |
+| `strategy/` + `visitor/` | `senddata`'nın karar katmanı: kayıt tipi, seyahat tipi, hangi tabloya |
+| `jobs/` | Zamanlanmış işler ve zamanlayıcı |
+| `management/index.js` | `/Admin` uçları |
+| `util/` | Veritabanına dokunmayan yardımcılar (aşağıda) |
+| `tools/` | Yerel geliştirme harness'ları — servisin parçası değil, istek yolunda hiç yüklenmez |
+| `test/` | Mocha testleri |
+| `validatorCacheFiles/` | Dosya cache'inin kök dizini (çalışma dizini altında) |
 
-## Test
+`util/` içindekiler:
 
-Parent projeden çalıştırılır:
+| Dosya | İş |
+|---|---|
+| `FileCacheManager.js` | Ağır okuma endpoint'lerinin disk cache'i; dosya adı ve gün mantığı |
+| `KafkaProducer.js` | Producer havuzu, broker listesi, bekleme süresi sınırı |
+| `SqliteBuilder.js` | Cihaza inen `.db` dosyalarını üretir (akış; SQL yine DAO'da) |
+| `XmlWalk.js` | Ham gövdeyi tam DOM'a çevirmeden eleman/öznitelik gezme |
+| `Gson.js` | Kafka'ya giden JSON gövdelerin üretimi |
+| `HttpUtil.js` | Bağlan/oku zaman aşımı olan POST istemcisi |
+| `KpgClient.js` | Ödeme geçidi çağrısı (`realauth`, `sendemvdata` düz proxy) |
+| `EmvUsageBatch.js` | Bir `senddata` gövdesindeki kredi kartı kullanımlarını toplayıp tek belge olarak gönderir |
+| `EccDsaVerify.js` | İmzalı kayıtların doğrulaması |
+| `RequestStats.js` | `systemid` + `func` bazında bellek içi çağrı sayacı (`?func=getstatistics`) |
+| `StringUtil.js`, `DatabaseError.js`, `XmlRpc.js` | Ayrıştırma, ORA hata sınıflandırma, XML-RPC yardımcıları |
+
+---
+
+## 4. Bir isteğin yolculuğu
+
+`validator/index.js` şu sırayı işletir:
+
+1. **Controller çözümü.** Açılışta `validator/controller/` altındaki her dosya yüklenir; her
+   dosya bir `funcs` tablosu export eder ve tablonun anahtarları o dosyanın cevapladığı `?func=`
+   değerleridir. İki dosya aynı anahtarı iddia ederse yükleme sırasında hata fırlatılır —
+   sessizce gölgelenen bir endpoint ancak cevap alamayan cihazdan fark edilirdi.
+   Tanınmayan `func` → `-9`.
+2. **Sayaç.** `RequestStats.add(systemId, func)` — dağıtımdan önce, yani hata alan çağrılar da sayılır.
+3. **Config görünümü.** Sistemin config satırı `app` satırının üstüne serilir ve `req.cfg` olarak
+   isteğe iliştirilir. Bu görünüm sistem başına bir kez kurulur ve `system_cfg.revision`
+   değiştiğinde (config yenilendiğinde) atılır; istek başına yeniden hesaplanmaz.
+4. **İstek logu.** `func`, `save_request_log_functions` listesindeyse ham gövde
+   `VALIDATOR_REQUEST_LOG`'a yazılır. `*_use_only_kafka_produce` açık olan fonksiyonlarda
+   atlanır: veritabanına yazılan bir şey olmadığı için ilişkilendirilecek kayıt da yoktur.
+5. **Cache.** Endpoint cache'lenebilir listedeyse ve istek bugünün işletim gününe aitse dosya adı
+   hesaplanır (bkz. [Dosya cache'i](#8-dosya-cachei)). Dosya varsa doğrudan döner. Yoksa ve başka
+   bir istek aynı dosyayı üretiyorsa `-20095 File Not Ready` döner.
+6. **Controller.** Cevap `res.locals.data` içine yazılır; framework onu gövdeye çevirir.
+   Cache'lenecek cevap diske yazılmadan önce içinde `<ERROR>` var mı diye bakılır — hata belgesi
+   asla cache'lenmez (`-20093`, tam sürüm isteniyorsa `-20098`).
+7. **Hata.** `ServiceError` olduğu gibi, diğer her şey `-99` olarak cihaza gider; stack yalnızca
+   log'a yazılır (cevap açık ağdaki bir cihaza gidiyor).
+
+Bir controller'ın kalıbı:
+
+```js
+class GetBusInfo extends ValidatorControllerBase {
+    async func(req, res, next) {
+        let respErr;
+        try {
+            await this.setValidatorStatus(req, " GetBusInfo ");
+            const dao = this.daoFactory.get("MstBusDaoImpl");
+            res.locals.data = await dao.getBusInfo(req.dbConn, { /* ... */ }, req.sessionId);
+        } catch (error) {
+            respErr = this.getServiceError(error, req);
+        } finally {
+            next(respErr);          // her yolda tam olarak bir kez
+        }
+    }
+}
+module.exports = { funcs: { getbusinfo: new GetBusInfo() } };
+```
+
+`ValidatorControllerBase`'in verdikleri: `cfg` / `cfgBool` / `cfgList` (sistem → `app` →
+varsayılan sıralı config okuma), `bodyElements(req)` (ham gövdeyi gezme), `produceKafka`,
+`okResponse`, `setValidatorStatus`, `kpgTimeouts`, `getServiceError` ve DAO erişimi.
+
+---
+
+## 5. Endpoint kataloğu
+
+65 endpoint, konuya göre 13 dosyada. Anahtarlar dosyaların `funcs` tablosundan gelir.
+
+| Dosya | `?func=` değerleri |
+|---|---|
+| `bus.js` | `getbusinfo`, `getbusparkplace`, `getbusroute`, `getbusrouteplan`, `getvehiclestop` |
+| `card.js` | `getblacklist`, `getcarddetail`, `getcardinfo`, `getofflinecardlist`, `generatefreecardsqlite` |
+| `device.js` | `sendcfg`, `sendlog`, `sendcan`, `sendalarm`, `wlanstatus`, `getvalcfg`, `getvalidatorlist`, `getfile`, `getfiles` |
+| `driver.js` | `getdriverpassword`, `setdriverpassword`, `verifydriver`, `getdriverplan`, `getdriverworkhours` |
+| `fare.js` | `getafcfares`, `getafcodmatrix`, `getafcproduct`, `getafczonegroup`, `getmstproducttype`, `getusagesummary`, `getzone`, `getuncalculatedtransaction`, `updateuncalculatedtransaction` |
+| `gps.js` | `sendgps`, `onlinegps` |
+| `message.js` | `getmessageinfo`, `readmessage` |
+| `payment.js` | `realauth`, `sendemvdata` |
+| `report.js` | `getreport`, `getreportinterval`, `getruninprogressreport` |
+| `route.js` | `getroute`, `getroutepath`, `getroutebusstop`, `getroutecoordinate`, `getrouteschedule`, `getpath`, `getpathbusstop`, `getpathstage`, `getstage`, `getbusstop`, `getrouteinfodb` |
+| `schedule.js` | `getschedule`, `getscheduleplan`, `gettriptype`, `getdutyschedule`, `getavlrules` |
+| `service.js` | `getversion`, `synctime`, `getcacheinfo`, `cleancachefiles`, `getstatistics`, `resetstatistics` |
+| `transaction.js` | `senddata` |
+
+Kabaca üç grup: **referans veri indirme** (`get*`), **cihazdan yükleme** (`send*`) ve
+**servis bakımı** (`service.js`).
+
+---
+
+## 6. `senddata` — en ağır yazma yolu
+
+Cihazın biriktirdiği bilet ve sefer kayıtları tek bir XML gövdesinde gelir; her kayıt bir
+`<DATA>` elemanıdır ve kredi kartı bilgisi varsa altında bir `<EMV>` çocuğu taşır.
+
+```
+senddata
+  ├─ setValidatorStatus            cihazın son durumu yazılır
+  ├─ senddataConfig                currency_multiplier, kart tipleri, kafka anahtarları …
+  ├─ mst_bus doğrulaması           bus_id + station_type kayıtlı mı
+  ├─ strateji seçimi (istek başına bir kez)
+  │     ├─ DataStrategy            otobüs (station_type 1 veya 5)
+  │     ├─ StationStrategy         istasyon
+  │     └─ TchewDataStrategy       yalnız sistem 106 + şirket ≠ 1
+  ├─ her <DATA> için
+  │     ├─ DataTransaction         öznitelik → alan adı eşlemesi
+  │     ├─ Kafka                   senddata_use_kafka_producer açıksa
+  │     └─ kayıt yazımı            kayıt başına bir transaction
+  ├─ EMV kullanımları              gövdedeki kredi kartı kullanımları tek belge hâlinde geçide
+  └─ ticket engine'e iletim        PK_CONFIG'teki URL boş değilse ham gövde iletilir
+```
+
+Kayıt tipi `record_id`'nin ilk harfinden okunur: **D** bilet, **F** sefer. F kayıtlarında
+`travel_type` `TravelTypeVisitor`'ın hangi metotlarının koşacağını belirler (vardiya açma/kapama,
+durak giriş/çıkış, kilometre, yolcu sayımı…) ve bir kayıt için birden fazlası çalışabilir.
+D ve F dışındaki kayıtlar sınıflandırılamayan kayıt tablosuna yazılır.
+
+Önemli davranışlar:
+
+- **Transaction sınırı bir kayıttır**, bir istek değil. Bozuk tek bir kayıt, aynı gövdedeki
+  sağlam kayıtları geri almaz.
+- **Bozuk kayıt cihaza OK döner** ve `TBL_VALIDATOR_ERROR_TD`'ye dosyalanır; tekrar göndermek
+  düzeltmeyeceği için cihaz meşgul edilmez.
+- **Aynı kayıt iki kez gelebilir**; duplicate key sessizce yutulur (`execIgnoreDuplicate`).
+- **Bilet, ait olduğu seferden önce gelebilir**; o durumda yer tutucu bir sefer satırı açılır.
+- Ayrıştırılamayan gövde log'a yazılır, hata kaydı düşülür ve cihaza yine OK denir.
+
+---
+
+## 7. DAO katmanı ve mimari kural
+
+Servisteki **tüm** SQL `validator/dao/` altındadır. Bu bir konvansiyon değil, testtir:
+`test/architecture.test.js`, `dao/` dışındaki hiçbir dosyada `conn.execute(...)`,
+`require('oracledb')`, `require('node:sqlite')` ya da SQL metni bulunmadığını doğrular.
+(`tools/` ve `test/` bu kuralın dışındadır.)
+
+- `BaseDao` yazma ifadelerinin ortak şeklini verir: `exec` (autocommit kapalı — commit sınırı
+  controller'ındır), `execIgnoreDuplicate`, `callLob` (N string IN + bir OUT LOB; okuma
+  endpoint'lerinin neredeyse tamamı bu kalıptadır, LOB gelmezse controller `-97` döner).
+- `daoUtil.withTransaction(conn, fn)` commit/rollback sarmalayıcısıdır.
+- `daoFactory.get("<SınıfAdı>", "sqlite"?)` DAO çözer; ikinci argüman verilmezse Oracle.
+- SQLite DAO'ları `BaseDao`'yu genişletmez: `node:sqlite` senkrondur ve havuz/transaction
+  mekaniğinin oradaki bir karşılığı yoktur.
+
+---
+
+## 8. Dosya cache'i
+
+Sekiz ağır okuma endpoint'inin cevabı diske yazılır ve aynı gün aynı isteği yapan diğer
+cihazlara dosyadan servis edilir:
+
+`getvehiclestop`, `getpathbusstop`, `getfiles`, `getroute`, `getpath`, `getroutepath`,
+`getrouteschedule`, `getofflinecardlist`.
+
+- Kök dizin: çalışma dizini altındaki `validatorCacheFiles/<KONU>/`.
+- Dosya adı: `<systemid>_<KEY>_<version>_<yyyyMMdd>`. `getfiles` sürüm yerine `type_fileid`,
+  `getrouteschedule` sürüme `timeunit` ekler.
+- **İşletim günü**, sistem başına bir kez veritabanından okunan dakika cinsinden bir kaymayla
+  hesaplanır (gün sınırında beş dakika tolerans). Cevap paylaşılabilir değilse — istek başka bir
+  güne aitse, `fromservice=1` ise, ya da endpoint'in kendi istisnalarına giriyorsa — cache hiç
+  devreye girmez.
+- Aynı dosyayı iki istek birden üretmez: üretim başlarken işaret konur ve **her** sonuçta
+  (başarı dâhil) kaldırılır; bu sırada gelenler `-20095 File Not Ready` alır.
+- `<ERROR>` içeren cevap asla cache'lenmez. Kontrol önce ham metinde `<ERROR` var mı diye bakar;
+  yoksa belge hiç ayrıştırılmaz — birkaç MB'lık kart listelerinde bu tek başına ölçülebilir bir
+  kazançtır.
+- Süpürme: `cache_cleanup` job'u `cache_max_age_ms`'ten (varsayılan 24 saat) eski dosyaları siler;
+  `?func=cleancachefiles` elle temizler, `?func=getcacheinfo` durumu gösterir.
+
+---
+
+## 9. SQLite dosya üretimi
+
+`getrouteinfodb` ve `generatefreecardsqlite` cihazın indirdiği `.db` dosyalarını üretir.
+Sürücü `node:sqlite`'tır (ek bağımlılık yok, Node 22.5+ gerekir).
+
+| Konu | Karar |
+|---|---|
+| Akış | Oracle'dan oku (await) → bellek içi veritabanına tek blokta yaz → `backup()` ile dosyaya kopyala |
+| Çıktı | `<yyyyMMdd>_local_.db`, `ValidatorServiceRouteDbFile/` ve `ValidatorServiceFreeCardDbFile/` altında |
+| `?cache=1` | Bugünün dosyası varsa o döner; aksi hâlde her çağrıda yeniden üretilir |
+| WAL | Açılmaz — `-wal`/`-shm` dosyaları oluşur ve cihaza giden `.db` eksik kalırdı |
+| Temizlik | Üretim sonrası çıktı dizinindeki 24 saatten eski dosyalar silinir |
+
+---
+
+## 10. Kafka üretimi
+
+Dört endpoint kayıtlarını Kafka'ya da üretebilir: `senddata`, `sendcfg`, `sendgps`, `sendlog`.
+Her biri kendi anahtar setiyle yönetilir:
+
+| Anahtar | Etki |
+|---|---|
+| `<func>_use_kafka_producer` | Kafka'ya üretim açık |
+| `<func>_use_only_kafka_produce` | **Veritabanına hiç yazma**, yalnız Kafka (istek logu da atlanır) |
+| `<func>_topic` | Hedef topic |
+| `<func>_kafka_error_throw` | Üretim hatası isteği düşürsün mü (varsayılan: hayır, yalnız log) |
+| `kk_bootstrap_servers_<func>` → `kk_bootstrap_servers` | Broker listesi; fonksiyona özel liste boşsa ortak listeye düşülür |
+| `kafka_producer_retries`, `kafka_producer_max_block_ms` | Yeniden deneme sayısı ve bekleme sınırı |
+
+Producer'lar `systemId + broker listesi` başına önbelleklenir; bir gönderim başarısız olursa çift
+atılır ve sonraki çağrı yenisini kurar. Kapanış sinyalinde hepsi flush edilip kapatılır.
+Üretim hatası varsayılan olarak `-99999` koduyla loglanır ama isteği düşürmez.
+
+---
+
+## 11. Job katmanı
+
+`jobs/index.js` iş listesini, `jobs/JobManager.js` zamanlayıcıyı tutar. Aynı periyoda düşen
+işler tek bir grup hâlinde zamanlanır.
+
+| Job | Kapsam | Açma anahtarı | Periyot anahtarı | Varsayılan |
+|---|---|---|---|---|
+| `config_watch` | servis | `run_config_watch` | `config_refresh_ms` | 5 dk, açık |
+| `cache_cleanup` | servis | `run_cache_cleanup` | `cache_cleanup_interval_ms` | 1 saat, açık |
+
+- Açık/kapalı bilgisi her turda **canlı config'ten** okunur; bağlanma anındaki değer saklanmaz.
+- Periyotlar `app` satırından okunur; açma anahtarını sistem satırı ezebilir.
+- `/Admin?func=reloadconfig` config'i yeniden okur **ve** işleri yeniden bağlar, yani değişen bir
+  periyot hemen etkili olur.
+- `VS_AUTOSTART=0` katmanı hiç başlatmaz.
+
+---
+
+## 12. `/Admin` uçları
+
+Veritabanı bağlantısı almayan, JSON dönen bakım uçları:
+
+| `?func=` | Ne yapar |
+|---|---|
+| `getversion` | Uygulama adı, sürüm, açılış zamanı |
+| `getconfig` | Config tablosunu okur, bellekteki kopyayı tazeler ve maskelenmiş hâlde döner (`pass`/`secret`/`token`/`pwd`/`credential`/`apikey` geçen anahtarlar `***`). `?systemid=` ile tek sistem |
+| `getjobs` | Her job'un kapsamı, bağlı olduğu grup, periyodu, son çalışma/süre/hata bilgisi ve **hangi sistemlerde açık olduğu** |
+| `reloadconfig` | Config'i yeniden okur ve job'ları yeniden bağlar |
+
+---
+
+## 13. Yapılandırma
+
+Config `VALIDATOR_SERVICE_CONFIG` tablosundadır: satır başına bir `SYSTEM_ID` ve JSON bir
+`CONFIG` kolonu. Okuma sırası **sistemin kendi satırı → paylaşılan `app` satırı → koddaki
+varsayılan**.
+
+Tablo **yalnızca `kkconfig` adlı Oracle havuzundan** okunur; başka havuza düşülmez. Bu bilinçli:
+havuzlar teker teker kuruluyor, dolayısıyla "kkconfig yok" ile "henüz kurulmadı" dışarıdan aynı
+görünüyor — geri düşmek, servisin yanlış konfigürasyonla sessizce çalışmaya başlaması demek
+olurdu. Tablo adı `kk_config_scheme` ile şema öneki alabilir; başka hiçbir tabloya önek uygulanmaz.
+
+İstekler config'i **bellekten** okur. `config_watch` beş dakikada bir tazeler; anında etki için
+`/Admin?func=reloadconfig`. Bir değişiklik en geç bir `config_refresh_ms` sonra isteklere yansır.
+Bozuk JSON'lu bir satır loglanıp atlanır — tek satır bütün servisi konfigürasyonsuz bırakmaz.
+
+Sık kullanılan anahtarlar:
+
+| Anahtar | İş |
+|---|---|
+| `currency_multiplier` | Tutarlar buna bölünür (varsayılan 100). Bazı sistemlerde koddan 1'e sabitlenir |
+| `card_type_check` | Test kartı tipleri |
+| `credit_card_type` | Kredi kartı tipleri (varsayılan `11`) |
+| `save_extended_fare` | Genişletilmiş ücret kolonu yazılsın mı |
+| `get_total_stop_cnt_from_pattern` | Toplam durak sayısı desenden mi okunsun |
+| `server_environment` | `prod` / `test`; test ortamı kredi kartı yolculuklarının tamamını geçide bildirir |
+| `save_request_log_functions` | Hangi endpoint'lerin gövdesi `VALIDATOR_REQUEST_LOG`'a yazılsın (virgüllü liste ya da dizi) |
+| `credit_card_auth_url`, `credit_card_data_url` | Ödeme geçidi adresleri; boş URL o adımı kapatır |
+| `kpg_connect_timeout_ms`, `kpg_read_timeout_ms` | Ödeme geçidi zaman aşımları (30s / 60s) |
+| `verify_driver_comp`, `getbusrouteplan_compcode_query`, `getbusrouteplan_driverid_query` | İlgili endpoint'lerin sorgu varyantları |
+| `sp_create_offline_recharge_xml_includes_provno` | Prosedürün imza varyantı |
+| `datasource_prefix` | Havuz alias'ının `systemid` önüne eklenecek ön ek |
+| `<func>_use_kafka_producer`, `<func>_use_only_kafka_produce`, `<func>_topic`, `kk_bootstrap_servers` | [Kafka](#10-kafka-üretimi) |
+| `config_refresh_ms`, `cache_cleanup_interval_ms`, `cache_max_age_ms` | Job periyotları — `app` satırından |
+| `run_config_watch`, `run_cache_cleanup` | Job açma anahtarları |
+
+Değerler JSON CLOB'tan geldiği için bir bayrak `true` yerine `"true"` olarak gelebilir;
+`cfgBool` bunu ve `"0"` / `"false"` / `""` durumlarını doğru okur.
+
+Ortam değişkenleri:
+
+| Değişken | Etki |
+|---|---|
+| `VS_AUTOSTART=0` | Job katmanını başlatmaz (testler ve çok süreçli kurulumdaki fazla süreçler) |
+| `VS_SQL_DEBUG=0` | SQL izini kapatır |
+
+---
+
+## 14. Hata kodları
+
+Cevap belgesindeki kod, cihazların eşleştiği sözleşmedir. `constant/ErrorManagement.js`
+tamamını tutar; sık görülenler:
+
+| Kod | Anlam |
+|---|---|
+| `-3` | `func` belirtilmemiş / ticket engine hatası |
+| `-9` | Tanınmayan `func` |
+| `-55`, `-56` | Sürücü bulunamadı / PIN uyuşmuyor |
+| `-97` | Veritabanından veri alınamadı (prosedür LOB üretmedi) |
+| `-99` | Beklenmeyen hata |
+| `-2001` | Bu sürücünün başka bir otobüste açık oturumu var |
+| `-20093` / `-20098` | Cevap hata belgesi içeriyor / tam sürüm iste |
+| `-20094` … `-20096` | İndirme başarısız / dosya hazır değil / dosya yok |
+| `-99999` | Kafka üretim hatası |
+
+Okuma endpoint'lerinin çoğu `dbErrorMessage` ile ORA hatalarını sabit bir metne çevirir; ham
+veritabanı mesajı cihaza gitmez, log'da kalır.
+
+---
+
+## 15. Loglama ve SQL izi
+
+Her istek `sessionId` ile loglanır; bir isteğin izi kabaca şu satırlardan oluşur:
+
+```
+Connection Opened:017            bağlantı alındı
+<func>                           dispatcher hangi endpoint'e gittiğini yazar
+SQL ifadeleri + bind'lar         ne çalıştı, hangi değerlerle
+Connection Closed:017            istek bitti
+```
+
+SQL izi varsayılan olarak açıktır ve `VS_SQL_DEBUG=0` ile kapatılır. Bind değerleri
+**maskelenerek** yazılır: `ptcn`, `enc_pan`, `emv`, `track2`, `cvv`, `pin`, `pin_block` tamamen
+gizlenir; kart numarası taşıyan alanlar ilk 6 + son 4 hâline getirilir (kısa değerler tamamen
+gizlenir).
+
+`error processing transaction record_id=...` satırı, `senddata` gövdesindeki tek bir kaydın
+patladığını gösterir — istek yine OK dönmüştür.
+
+---
+
+## 16. Test
 
 ```
 npm run test_validator_service
 ```
 
-## Parent projede gereken değişiklikler
+Kök projeden koşar (mocha + mochawesome, rapor `test-report/` altına). 300'ün üzerinde test var
+ve **hiçbiri veritabanına ya da Kafka'ya bağlanmaz**: `test/fakeConn.js` ve `test/fakeKafka.js`
+sahte bağlantı/producer verir, `test/rootHooks.js` her testten önce süreç genelindeki
+önbellekleri temizler.
 
-Bu repo tek başına çalışmaz. `node-app-server` tarafında tek bir ekleme gerekir;
-yeni bir klondan sonra uygulanmalıdır.
-
-**`node-app-server/package.json` — scripts:**
-
-```json
-"test_validator_service": "mocha ./webapps/node-validator-service/test --recursive --exit --reporter=./node_modules/mochawesome --reporter-options reportDir=webapps/node-validator-service/test-report,reportTitle=\"Validator Services Test Report\",reportPageTitle=\"Validator Service Test Report\",overwrite=true,enableCode=false"
-```
-
-`test/architecture.test.js` üç kuralı zorluyor: `require('oracledb')` veya SQL metni
-`validator/dao/` dışında görünemez; kayıtlı her `?func=` anahtarı küçük harftir ve tek bir
-grup tarafından sahiplenilir; kayıtlı her endpoint `func(req, res, next)` sözleşmesini
-karşılar.
-
-## Migrasyon durumu
-
-Faz 1-8 tamamlandı, Faz 9 sürüyor: 65 endpoint (13 controller dosyası), 45 Oracle DAO, 10 SQLite DAO, 2 job, 3 strateji, 4 bean, 358 test.
-(Ayrıca `oracle/` altında DAO olmayan 2 yardımcı: `tdSql.js` SQL builder, `apcBind.js` ortak projeksiyon.)
-
-**DAO sayısı neden Java'nın 9'undan fazla:** Java'da 9 DAO sınıfı vardı ama tüm SQL'in
-sadece %14'ünü kapsıyorlardı — 190 statement noktasının 27'si. Kalan 163'ü 7 library
-dosyasının içine gömülüydü. Roadmap kararı #6 ("veritabanı erişimi yalnız DAO katmanında")
-+ "DAO tek tablo veya tek paket" kuralı gereği sayı, servisin dokunduğu farklı
-tablo/paket sayısına eşit oldu. Roadmap §21 bunu 59 olarak öngörmüştü.
-
-Java'daki 67 `?func=` dalının 65'i taşındı. Kalan 2'si (`getcardlist`, `getonlineschedule`)
-ölü kod, taşınmayacak. **Endpoint borcu kalmadı.**
-
-Kalan iş: Faz 9.2 yük testi, 9.5 paralel çalıştırma, 9.6 kademeli geçiş.
-
-## Kontrol paneli
-
-```
-node tools/panel/server.js     ->  http://localhost:3100
-```
-
-Bu bölümdeki her şeyi düğmeyle çalıştırır: iki servisi başlat/durdur, KKCONFIG ve test
-verisini bas, test satırlarını temizle, karşılaştırmaları ve yük matrisini koştur, raporları
-oku. Çıktı canlı akar (SSE). Yalnız loopback'e bağlanır — komut çalıştırıp satır sildiği için
-ağa açılmamalıdır.
-
-Panelin bastığı SQL `tools/panel/sql/` altında: `seed-kkconfig.sql` (env.properties'ten
-18 satır), `seed-testdata.sql` (otobüs `00001`, istasyon `00002`, sürücü `D0001`),
-`clean.sql` (yalnız araçların yazdığı satırlar; seed verisi ve KKCONFIG kalır).
-
-## Java ile karşılaştırma (Faz 9)
-
-`tools/compare/` iki servise aynı isteği gönderip cevapları ve yazılan satırları karşılaştırır.
-Mocha ile çalışmaz; elle çalıştırılan bir kabul aracıdır ve iki servisin de ayakta olmasını ister.
-
-```
-node tools/compare/compare.js        # okuma endpoint'leri  -> tools/compare/report.md
-node tools/compare/compareWrites.js  # yazma yolları        -> tools/compare/report-writes.md
-```
-
-> `compareWrites.js` **veri siler**: her vakanın satırlarını iki koşu arasında ve sonunda
-> temizler. Yalnızca yerel test veritabanına doğrultulmalıdır.
-
-Son durum: okuma **46 aynı / 0 farklı** (4 endpoint doğası gereği karşılaştırılamaz ve
-raporda gerekçesiyle listelenir), yazma **25 aynı / 1 beklenen fark** (26 vaka).
-
-## Yük karşılaştırması (Faz 9.2)
-
-```
-node tools/load/load.js --matrix 1 --seconds 12
-```
-
-Aynı isteği iki servise sürüp taşıdıkları yükü raporlar (`tools/load/report-load.md`).
-**Donanım kıyaslaması değildir** — Java konteynerde, bu servis doğrudan makinede çalışıyor;
-anlamlı olan şekil. Isınma şart: ısınmasız ölçüm JIT maliyetini Java'nın sırtına yıkar.
-
-Eşzamanlılık 8'de bu servis Java'nın **%65–98**'ini taşıyor (prosedür çağrısında %98,
-okumada %89, `senddata`'da %65).
-
-**CPU nereye gidiyor.** `senddata` profilinde çalışan CPU'nun **~%50'si log çıktısı**
-(ELK'e UDP %18, senkron stdout %16, mesaj kurma/temizleme gerisi), %16 oracledb thin
-sürücü, **%4 bu servisin kendi kodu**. `ULog`'da seviye filtresi yok: her çağrı mesajı
-kurup stdout'a yazıp UDP atıyor.
-
-`VS_SQL_DEBUG=0` ifade izini kapatır (maskeleme de hesaplanmaz) ve `senddata`'da
-**~%10** kazandırır — profilin ima ettiği %50 değil, çünkü süreç bu eşzamanlılıkta tam
-CPU-bound değil, zamanın bir kısmını Oracle'ı beklemekle geçiriyor. Kazanç anlık verim
-değil, başlık.
-
-**Yapısal tavan ve çözümü.** Tek Node süreci = tek çekirdek + tek havuz (10 bağlantı);
-Tomcat hem çekirdeklere yayılıyor hem tek havuzu paylaşıyor. Üç Node süreci önüne bir yük
-dengeleyici koyarak ölçüldüğünde tablo tersine dönüyor — havuzlar eşitlenerek (Java 30,
-Node 3×10):
-
-| Eşzamanlılık | Java (havuz 30) | Node ×1 (10) | Node ×3 (30) |
-|---:|---:|---:|---:|
-| 8 | 275 | 178 | 269 |
-| 16 | 270 | 113 *(3422 hata)* | **316** |
-| 24 | 200 | 57 *(5945 hata)* | **281** |
-
-Yani sorun Node değil, tek süreç. Üç süreçle Java'yı yakalıyor, yük artınca geçiyor.
-
-**Çok süreçli kurulumda `VS_AUTOSTART=0` şart.** Job katmanı her süreçte ayrı ayrı başlıyor:
-üç süreç çalıştırıldığında `config_watch` ve `cache_cleanup` üçünde birden kayıtlı oldu.
-`cache_cleanup` aynı dosyaları üç kez tarar, `config_watch` config tablosunu üç kez okur. Doğru kurulum: **yalnız bir süreç job'ları çalıştırır**, diğerleri
-`VS_AUTOSTART=0` ile kalkar (doğrulandı: job sayısı 0, endpoint'ler normal çalışıyor).
-
-Her süreç kendi Oracle havuzunu açtığı için toplam bağlantı = süreç sayısı × `poolSize`;
-veritabanının `sessions` sınırı buna göre ayarlanmalı.
-
-**Pool eşiği — geçiş öncesi karar gerektiren madde.** `senddata`'da eşzamanlılık pool
-boyutunu (10) aştığında bu servis kuyruğa almak yerine `-99 getConnection Err` dönüyor:
-12'de %2, 16'da isteklerin %78'i. Java'nın Tomcat pool'u 10 sn bekliyor ve hiç istek
-düşürmüyor, p95 yükseliyor. Roadmap risk #15'in ölçülmüş hâli; ayar parent projede
-(`config/index.js` + framework `queueMax`).
-
-Okuma tarafında normalize edilenler raporun başında listelenir — XML bildirimi, elemanlar
-arası boşluk, vaka bazında değişken alanlar, iki Oracle sürücüsünün de eklediği yardım
-bağlantısı ve `{call}` → `BEGIN…END;` dönüşümünün kaydırdığı ORA-06550 konumu.
-
-## Java'dan bilinçli sapmalar
-
-Servis Java'yı birebir taklit eder; aşağıdakiler bilerek ayrılan yerlerdir. Faz 9'daki `MINUS`
-karşılaştırmasında **beklenen fark** olarak işlenir ve sürüm notuna girer. Gerekçelerin tamamı
-`validator-migration-notlar.txt` içinde.
-
-| # | Konu | Java | Node | Neden |
-|---|---|---|---|---|
-| 1 | Transaction | Yok, her INSERT kendi commit'i | Kayıt başına açık transaction | Bir kaydın tabloları arası tutarlılığı; roadmap §4 |
-| 2 | Veri formatı hatasından sonrası | Gövdenin kalanı **hiç işlenmez**, cihaza OK | Kalan kayıtlar yazılır | Bir kayıt = parası alınmış gerçek bir yolculuk. Cihaz OK alınca gövdeyi bir daha göndermez, o yüzden Java'nın davranışı sessiz veri kaybı. Notlar [48] |
-| 3 | `sendgps` eksik `MAIN_EVENT` | NullPointerException, tüm istek düşer | Kayıt normal yazılır | Notlar [15] |
-| 4 | `getroute` LOB boş | `setMessage(-97)` sonrası NPE | `-97` dönülüp durulur | Notlar [11] |
-| 5 | `getrouteinfodb?cache=1` | Stream kullanılmadan kapatılıyor, **her zaman** patlar | Dosya okunup döner | Notlar [37] |
-| 6 | XML-RPC (`sendalarm`) | Timeout yok, takılan cihaz isteği süresiz tutar | 5 sn | Notlar [15] |
-| 7 | Kesik gövde | `DocumentBuilder` SAXException atar | `XmlWalk.assertWellFormed` sezgisel kontrolü | xml-js kesik gövdeyi kabul ediyor; notlar [26] |
-
-## Kafka üretimi (Faz 8)
-
-Java `KkAvlProducer` + `KkKafkaConfigurator` → `util/KafkaProducer.js` (`kafkajs`, parent projeden).
-Producer'lar `systemId + bootstrap` çiftine göre önbelleklenir; bir gönderim patlarsa o producer
-atılır ve sonraki çağrı yenisini kurar — Java da öyle yapıyordu.
-
-**Gönderim beklemez.** Java `producer.send(record, callback)` kaydı tampona bırakıp dönüyordu,
-broker'ın cevabı yalnızca log'lanan bir callback'e gidiyordu. Broker onayını `await` etmek,
-Java'nın OK döndüğü isteği düşürürdü; o yüzden burada da beklenmiyor. Bağlantı kurulumu ise
-`kafka_producer_max_block_ms` ile sınırlı (Java'nın `max.block.ms` karşılığı).
-
-Mesaj gövdesi Gson'un ürettiği belgeyle aynı şekilde kurulur: **null alan belgeye hiç girmez**
-(`util/Gson.js`), alan sırası Java bean'inin tanım sırasıdır. Projeksiyonlar bean'lerde:
-`toKafkaPayload()` / `toKafkaGpsPayload()` / `toKafkaCanPayload()`.
-
-| Fonksiyon | Anahtar | Belge | Not |
-|---|---|---|---|
-| `senddata` (otobüs) | `sam_id` | `DataTransaction`, `type:"T"` | `latitude` ve `LATITUDE` aynı değeri taşır |
-| `senddata` (istasyon) | `sam_id` | daha dar alan kümesi | konum, `path_code`, yakıt yok |
-| `sendcfg` | `sam_id` | `CfgTransaction` | `validator_id` her zaman `pcb_id`'den gelir |
-| `sendgps` GPSDAT | `sam_id` | `GpsTransaction` | saat kontrolünden **önce** üretilir |
-| `sendgps` CANDAT | `bus_id` | aynı bean | Java tek nesneyi paylaştığı için son GPSDAT'ın alanları belgede kalır |
-| `sendlog` | `bus_id` | `LogTransaction` | `scope` guard'ından **önce**, her eleman için |
-
-| Anahtar | Tip | Varsayılan |
-|---|---|---|
-| `<func>_use_kafka_producer` | bool | `false` |
-| `<func>_use_only_kafka_produce` | bool | `false` — açıkken DB yazımı atlanır, üretim devam eder |
-| `<func>_kafka_error_throw` | bool | `false` — kapalıyken hata yalnızca log'lanır |
-| `<func>_topic` | string | — |
-| `kk_bootstrap_servers` | csv | — |
-| `kk_bootstrap_servers_<func>` | csv | boşsa üsttekine düşer |
-| `kafka_producer_retries` | int | `3` |
-| `kafka_producer_max_block_ms` | int | `10000` |
-
-`<func>` ∈ `senddata`, `sendcfg`, `sendgps`, `sendlog`.
-
-## senddata'nın iki dış çağrısı
-
-**Data-forward.** Kayıtlar yazıldıktan sonra `PK_CONFIG.FN_GET_TE_DATAFORWARD_URL` okunur; doluysa
-ham gövde `<url>&systemid=<id>&lang=en` adresine POST edilir. Cevaptaki `result.code` 0 değilse
-istek `-3 Ticket Engine Error: …` ile düşer. (Roadmap §15.5 bunu XML-RPC sanıyordu; değil, düz
-HTTP + JSON — `util/HttpUtil.js` yeterli oldu.)
-
-**Kredi kartı kullanım paketi.** `credit_card_type` listesindeki kartların biletleri gövde boyunca
-biriktirilip `credit_card_data_url + addUsageEmvValidator` adresine tek belgede gönderilir
-(`util/EmvUsageBatch.js`). Yalnızca otobüs yolunda (`ins_data`) çalışır. `key_index = 1` cihazın
-ücreti kendi hesapladığı anlamına gelir ve atlanır; `server_environment = test` iken hepsi
-gönderilir. Kart kredi kartıysa ama `ptcn` yoksa kayıt `101` ile düşer.
-
-## Job katmanı (Faz 7)
-
-Java'da yoktu. `VS_AUTOSTART=0` ile kapatılabilir (testler böyle çalışır). Yapı
-`node-abt-terminal`'deki ile aynı: job bir modül değil, `jobs/index.js` içindeki `JOBS`
-dizisinde **düz bir obje**; flag/requires kontrolü, periyot çözümü, sync-async ayrımı ve
-sistem döngüsü `JobManager` içinde tek yerde.
-
-| Alan | Anlamı |
+| Klasör | Kapsam |
 |---|---|
-| `scope` | `service` → turda bir kez; `system` (varsayılan) → her kkconfig satırı için bir kez |
-| `flag` | Açma anahtarı. `defaultOn:true` ise anahtar yokken de açıktır. **Her turda** okunur: DB'de flag açmak restart istemez |
-| `requires` | Dolu olması gereken anahtarlar; eksikse job o turu hata kaydıyla atlar |
-| `intervalKey` / `intervalMs` | Periyodun `app` anahtarı ve anahtar yokken kullanılacak varsayılan |
-| `mode` | `async` → sınırlı havuzda çalışır, grubun geri kalanını bekletmez |
-| `func(ctx)` | İş. `ctx` config okumalarını ve sistem job'ı için connection'ı taşır |
+| `test/architecture.test.js` | DAO sınırı — `dao/` dışında SQL veya sürücü kullanımı yok |
+| `test/validator/` | Endpoint davranışları: cache akışı, Kafka üretimi, hata maskeleme, yazma uçları |
+| `test/strategy/` | `senddata` karar katmanı |
+| `test/transaction/` | XML → alan adı eşlemeleri |
+| `test/dao/` | SQL üretimi ve bind'lar |
+| `test/util/`, `test/jobs/` | Yardımcılar ve zamanlayıcı |
 
-| Job | Kapsam | Flag | Periyot anahtarı | Varsayılan | Durum |
-|---|---|---|---|---:|---|
-| `config_watch` | service | `run_config_watch` | `config_refresh_ms` | 5 dk | açık |
-| `cache_cleanup` | service | `run_cache_cleanup` | `cache_cleanup_interval_ms` + `cache_max_age_ms` | 1 sa / 1 gün | açık |
+---
 
-Kalan iki job da servis geneli. `scope: "system"`, `requires` ve `mode: "async"` runner'ın
-sözleşmesinde duruyor — sistem başına koşan bir job eklendiğinde diziye bir girdi yetiyor;
-testler bu yolları sentetik job'larla doğruluyor.
+## 17. `tools/` — yerel yardımcılar
 
-**Aynı periyoda sahip job'lar tek scheduler'da gruplanır** ve grup içinde sırayla koşar —
-`queueMax=1` havuzlarda aynı anda connection istememelerinin yolu budur (eski `STAGGER_STEP_MS`
-job-başına kaydırma bu yüzden kalktı). Gruplar da açılışta 10'ar saniye kaydırılır. Bir turda
-biriken hatalar tur sonunda birlikte fırlatılır; böylece konsolda ve `?func=getjobs`'ta grup
-kırmızı görünür, ama bir sistemin düşmesi diğerlerinin turunu götürmez.
+Servisin parçası değildir, istek yolunda hiç yüklenmez, mimari kuralın dışındadır.
 
-`?func=getjobs` hem grupları (periyot, son koşu, son hata) hem de job'ları listeler; her job
-`enabledFor` ile hangi sistemlerde açık olduğunu söyler. `?func=reloadconfig` KKCONFIG'i
-yeniden okur; **yalnız periyot değişikliği** rebind gerektirir, flag ve eşikler zaten her turda
-okunur.
-
-## Konfigürasyon okuma
-
-Dispatcher config'i **bellekten** okur (`system_cfg.cfgs`), Java `EnvConfig` gibi.
-`config_watch` 5 dakikada bir tazeler; anında etki için `?func=reloadconfig`.
-Bir config değişikliği en geç bir `config_refresh_ms` sonra istekleri etkiler.
-
-## İstek logu
-
-`save_request_log_functions` listesindeki fonksiyonlar gövdeyi `VALIDATOR_REQUEST_LOG`
-tablosuna yazar. Satır **ayrı commit** edilir (autocommit), yazım hatası isteği düşürmez.
-`*_use_only_kafka_produce` açık olan fonksiyonda log atlanır — Java da öyle yapıyordu.
-
-## SQLite dosya üretimi (Faz 6)
-
-`getrouteinfodb` ve `generatefreecardsqlite` cihaza indirilen `.db` dosyalarını üretir.
-Sürücü **`node:sqlite`** — bağımlılık yok, Node 22.5+ gerektirir (Docker imajı `node:24`).
-
-| Konu | Karar |
+| Araç | İş |
 |---|---|
-| Akış | Oracle'dan oku (await) → bellek içi db'ye tek blokta yaz → `backup()` ile dosyaya kopyala |
-| Dosya adı | `<yyyyMMdd>_local_.db`, `ValidatorServiceRouteDbFile/` ve `ValidatorServiceFreeCardDbFile/` altında |
-| `?cache=1` | Bugünün dosyası varsa o döner; `cache=0` veya parametre yoksa her zaman yeniden üretilir |
-| WAL | **Açılmaz.** `-wal`/`-shm` dosyaları oluşur ve cihaza giden `.db` eksik kalırdı |
-| DDL yazım hataları | `MUMERIC(4)` / `NUMBERIC(3)` **aynen korundu** — SQLite kolon affinity'sini tip adının yazılışından belirliyor |
+| `tools/panel/server.js` | Yerel kontrol paneli (`http://localhost:3100`). Servisi başlatır/durdurur, test şemasını hazırlar, karşılaştırma ve yük koşularını tetikler. **Yalnız loopback'e bağlanır; ağa açılmamalıdır** — komut çalıştırır ve satır siler |
+| `tools/compare/compare.js` | Aynı okuma isteklerini iki servis adresine atıp cevapları normalize ederek diff'ler |
+| `tools/compare/compareWrites.js` | Aynısını yazma uçları için: isteği atar, veritabanına ne yazıldığını karşılaştırır |
+| `tools/load/load.js` | Yük harness'ı: `--scenario`, `--concurrency`, `--seconds`, `--matrix 1` |
 
-## Faz 5 ile gelen konfigürasyon anahtarları
-
-`KKCONFIG.VALIDATOR_SERVICE_CONFIG` içindeki JSON'a eklenir.
-
-| Anahtar | Tip | Varsayılan | Satır | Açıklama |
-|---|---|---|---|---|
-| `credit_card_auth_url` | string | `""` | sistem → app | `realauth` / `sendemvdata` için KPG adresi |
-| `credit_card_type` | csv veya dizi | `["11"]` | sistem → app | Kredi kartı tipleri; `transfer_ref_code="sync"` bunlara yazılır |
-| `kpg_connect_timeout_ms` | int | `30000` | **yalnız app** | Java `EnvConfig.getSystemConfig("app")` ile aynı |
-| `kpg_read_timeout_ms` | int | `60000` | **yalnız app** | |
+Üçü de yerel bir test şemasına karşı elle çalıştırılmak üzere yazılmıştır.

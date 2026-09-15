@@ -48,21 +48,12 @@ class ValidatorControllerBase {
         return app !== undefined ? app : defaultValue;
     }
 
-    /**
-     * The 'app' row only. Java read the KPG timeouts through EnvConfig.getSystemConfig("app"),
-     * so a system row that sets them is ignored — unlike every other key.
-     */
-    appCfg(req, key, defaultValue) {
-        const app = req.cfg?.defaultCfg ? req.cfg.defaultCfg[key] : undefined;
-        return app !== undefined ? app : defaultValue;
-    }
-
     /** Java's HttpURLConnection pair: one deadline to connect, another to read the answer. */
     kpgTimeouts(req) {
         return {
-            connectTimeoutMs: Number(this.appCfg(req, "kpg_connect_timeout_ms",
+            connectTimeoutMs: Number(this.cfg(req, "kpg_connect_timeout_ms",
                 HttpUtil.DEFAULT_CONNECT_TIMEOUT_MS)),
-            readTimeoutMs: Number(this.appCfg(req, "kpg_read_timeout_ms",
+            readTimeoutMs: Number(this.cfg(req, "kpg_read_timeout_ms",
                 HttpUtil.DEFAULT_READ_TIMEOUT_MS)),
         };
     }
@@ -94,10 +85,11 @@ class ValidatorControllerBase {
 
     /**
      * The six Java produce blocks share one shape: send the message, log a failure, and let it
-     * take the request down only when <func>_kafka_error_throw is on. errorPrefix is the literal
-     * that call site used — two of them spell it "Kakfka Error:" and the spacing varies.
+     * take the request down only when <func>_kafka_error_throw is on. Java spelled the prefix
+     * three ways across the blocks, one of them "Kakfka Error:"; they all carry the same code,
+     * so the constant is used at every one of them now.
      */
-    async produceKafka(req, func, payload, recordKey, errorPrefix) {
+    async produceKafka(req, func, payload, recordKey) {
         try {
             await KafkaProducer.produce(payload, {
                 systemId: req.systemId ?? req.query.systemid,
@@ -109,7 +101,8 @@ class ValidatorControllerBase {
         } catch (error) {
             this.ULog.error(`Kafka producer error: ${error?.message}`, req.sessionId);
             if (!this.cfgBool(req, `${func}_kafka_error_throw`, false)) return;
-            throw new ServiceError(this.ErrorCodes.KAFKA_ERROR.code, errorPrefix + error?.message);
+            throw new ServiceError(this.ErrorCodes.KAFKA_ERROR.code,
+                this.ErrorCodes.KAFKA_ERROR.message + error?.message);
         }
     }
 

@@ -77,7 +77,6 @@ class StationStrategy {
      */
     async processF(conn, trx, cfg, sessionId) {
         trx.travelType = trx.travel_type;
-        trx.half_progress_type = trx.hpt;
         trx.pathCode = trx.path_code;
         // ins_station parses the odometer here for every travel type, unlike the bus path where
         // only the types that run the preparation step ever set it.

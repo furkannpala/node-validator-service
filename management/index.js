@@ -34,7 +34,6 @@ const controller = {
         const rows = await configDaoImpl.getAllConfig();
         const cfgs = {};
         for (const row of rows) cfgs[row.SYSTEM_ID] = row.CONFIG;
-        // Java EnvConfig always had an [app] section; downstream lookups assume it exists.
         if (!cfgs.app) cfgs.app = {};
         system_cfg.setCfgs(cfgs);
 

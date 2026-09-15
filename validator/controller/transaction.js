@@ -5,7 +5,7 @@
  * validator/index.js registers them straight from there.
  */
 const { ValidatorControllerBase } = require("../ValidatorControllerBase");
-const DataTransaction = require("../../bean/DataTransaction");
+const DataTransaction = require("../transaction/DataTransaction");
 const DataStrategy = require("../../strategy/DataStrategy");
 const StationStrategy = require("../../strategy/StationStrategy");
 const TchewDataStrategy = require("../../strategy/TchewDataStrategy");
@@ -37,7 +37,7 @@ class SendData extends ValidatorControllerBase {
         try {
             await this.setValidatorStatus(req, " SendData ",
                 ` Stationtype :${req.query.stationtype} arch :${req.query.arch}`);
-            await this.process(req, res);
+            await this.store(req, res);
             await this.forwardToTicketEngine(req);
             this.okResponse(res);
         } catch (error) {
@@ -47,62 +47,58 @@ class SendData extends ValidatorControllerBase {
         }
     }
 
-    /**
-     * Java's process() turned everything the body raised — a missing bus, a rejected record, a
-     * refused Kafka send — into one code before it reached the device.
-     */
-    async process(req, res) {
+    async store(req, res) {
         try {
-            await this.store(req, res);
+            const cfg = this.senddataConfig(req, res);
+
+            let elements;
+            try {
+                elements = this.bodyElements(req);
+            } catch (error) {
+                // The error row keeps the body but not why it would not parse, and the device is
+                // answered OK, so without this line a malformed body leaves no trace in the log.
+                this.ULog.error(`XML parsing error: bus_id=${cfg.busId} `
+                    + `station_type=${cfg.stationType}: ${error?.stack || error?.message}`,
+                    req.sessionId);
+                await this.recordError(req, cfg, 'XML parsing error', 'XML_PARSE_ERROR');
+                return;
+            }
+
+            if (!await this.mstBus.checkStation(req.dbConn, cfg.busId, cfg.stationType, req.sessionId)) {
+                // Message kept word for word: operations greps for it.
+                throw new Error(`mst_bus validation failed: BUS_ID: ${cfg.busId}, `
+                    + `STATION_TYPE: ${cfg.stationType} (no record found)`);
+            }
+
+            const strategy = await this.selectStrategy(req, cfg);
+            const isStation = !this.Constant.BUS_STATION_TYPES.has(String(cfg.stationType));
+            // Only ins_data gathered the credit card usages; the station and tchew paths did not,
+            // and the strategies skip the step when there is nothing to gather them into.
+            if (strategy === this.dataStrategy) cfg.emvUsages = new EmvUsageBatch();
+            const trx = new DataTransaction();
+            for (const element of elements) {
+                if (element.name.toUpperCase() !== 'DATA') continue;
+                // Java cleared part of the state here and left the rest to carry over; see
+                // DataTransaction.resetPerElement for which fields those are.
+                trx.resetPerElement(isStation);
+                // The EMV child is read first, so a name carried by both loses to the DATA value.
+                for (const emv of XmlWalk.descendants(element.node, 'EMV')) trx.applyEmvAttrs(emv.attrs);
+                // ins_station names several attributes differently; see DataTransaction.
+                if (isStation) trx.applyStationAttrs(element.attrs);
+                else trx.applyAttrs(element.attrs);
+
+                if (cfg.toKafka) {
+                    await this.produceKafka(req, 'senddata', trx.toKafkaPayload(isStation),
+                        trx.sam_id);
+                }
+                if (cfg.dbEnabled) await this.storeRecord(req, strategy, trx, cfg);
+            }
+
+            await this.sendEmvUsages(req, cfg);
         } catch (error) {
             throw new this.ServiceError(this.ErrorCodes.DB_OPERATION_FAILED.code,
                 this.ErrorCodes.DB_OPERATION_FAILED.message + DatabaseError.getErrorMessage(error));
         }
-    }
-
-    async store(req, res) {
-        const cfg = this.senddataConfig(req, res);
-
-        let elements;
-        try {
-            elements = this.bodyElements(req);
-        } catch (error) {
-            // A body that will not parse is filed and answered OK: resending cannot fix it.
-            await this.recordError(req, cfg, 'XML parsing error', 'XML_PARSE_ERROR');
-            return;
-        }
-
-        if (!await this.mstBus.checkStation(req.dbConn, cfg.busId, cfg.stationType, req.sessionId)) {
-            // Message kept word for word: operations greps for it.
-            throw new Error(`mst_bus validation failed: BUS_ID: ${cfg.busId}, `
-                + `STATION_TYPE: ${cfg.stationType} (no record found)`);
-        }
-
-        const strategy = await this.selectStrategy(req, cfg);
-        const isStation = !this.Constant.BUS_STATION_TYPES.has(String(cfg.stationType));
-        // Only ins_data gathered the credit card usages; the station and tchew paths did not,
-        // and the strategies skip the step when there is nothing to gather them into.
-        if (strategy === this.dataStrategy) cfg.emvUsages = new EmvUsageBatch();
-        const trx = new DataTransaction();
-        for (const element of elements) {
-            if (element.name.toUpperCase() !== 'DATA') continue;
-            // Java cleared part of the state here and left the rest to carry over; see
-            // DataTransaction.resetPerElement for which fields those are.
-            trx.resetPerElement(isStation);
-            // The EMV child is read first, so a name carried by both loses to the DATA value.
-            for (const emv of XmlWalk.descendants(element.node, 'EMV')) trx.applyEmvAttrs(emv.attrs);
-            // ins_station names several attributes differently; see DataTransaction.
-            if (isStation) trx.applyStationAttrs(element.attrs);
-            else trx.applyAttrs(element.attrs);
-
-            if (cfg.toKafka) {
-                await this.produceKafka(req, 'senddata', trx.toKafkaPayload(isStation), trx.sam_id,
-                    isStation ? 'Kakfka Error:' : 'Kafka Error:');   // Java's two spellings
-            }
-            if (cfg.dbEnabled) await this.storeRecord(req, strategy, trx, cfg);
-        }
-
-        await this.sendEmvUsages(req, cfg);
     }
 
     /**

@@ -1,4 +1,4 @@
-const { gson } = require('../util/Gson');
+const { gson } = require('../../util/Gson');
 
 // Attribute names differ from column names here, so each element type carries its own map.
 const LOG_ATTRS = { hostname: 'host_name', source: 'source' };

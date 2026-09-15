@@ -1,5 +1,5 @@
 const assert = require('assert');
-const DataTransaction = require('../../bean/DataTransaction');
+const DataTransaction = require('../../validator/transaction/DataTransaction');
 
 describe('DataTransaction attribute map', () => {
     it('renames the ten attributes whose XML name differs from the column', () => {
@@ -135,11 +135,15 @@ describe('DataTransaction station attribute map', () => {
         assert.strictEqual(byCode.bus_stop_id, '46');
     });
 
-    it('puts half_progress_type in hpt and matches it case insensitively', () => {
-        const trx = new DataTransaction();
-        trx.applyStationAttrs({ HALF_PROGRESS_TYPE: '1' });
-        assert.strictEqual(trx.hpt, '1');
-        assert.strictEqual(trx.half_progress_type, null);
+    it('matches half_progress_type case insensitively, unlike the bus path', () => {
+        const station = new DataTransaction();
+        station.applyStationAttrs({ HALF_PROGRESS_TYPE: '1' });
+        assert.strictEqual(station.half_progress_type, '1');
+
+        // ins_data compared this one with ==, so the uppercase spelling is ignored there.
+        const bus = new DataTransaction();
+        bus.applyAttrs({ HALF_PROGRESS_TYPE: '1' });
+        assert.strictEqual(bus.half_progress_type, null);
     });
 
     it('has 36 exact and 24 insensitive entries', () => {

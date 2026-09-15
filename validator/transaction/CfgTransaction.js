@@ -1,4 +1,4 @@
-const { gson } = require('../util/Gson');
+const { gson } = require('../../util/Gson');
 
 // Field names are the XML attribute names, exactly as Java's ins_cfg matched them, so
 // applyAttrs needs no translation table. Two attributes are special-cased below.

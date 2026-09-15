@@ -1,5 +1,5 @@
-const StringUtil = require('../util/StringUtil');
-const { gson } = require('../util/Gson');
+const StringUtil = require('../../util/StringUtil');
+const { gson } = require('../../util/Gson');
 
 /**
  * The DATA element of a senddata body. Java read it with three different comparison styles in
@@ -50,7 +50,7 @@ const DATA_CI = {
  *   traffic_type   is spelled correctly here, while ins_data only accepts the typo trafic_type
  *   origin_sam_id  arrives under its own name, not as trans_sam_id
  *   bus_stop_id    is accepted as well as bus_stop_code
- *   half_progress_type lands in hpt, and is matched case insensitively rather than exactly
+ *   half_progress_type is matched case insensitively here rather than exactly
  * Stations also never send a position, a path code or fuel figures.
  */
 const STATION_EXACT = {
@@ -71,7 +71,7 @@ const STATION_EXACT = {
 const STATION_CI = {
     fare_file_version: 'fare_file_version', travel_type: 'travel_type',
     vehicle_type: 'vehicle_type', qtick_used: 'qtick_used', origin_sam_id: 'origin_sam_id',
-    half_progress_type: 'hpt', odometer: 'odometer', return_flag: 'return_flag',
+    half_progress_type: 'half_progress_type', odometer: 'odometer', return_flag: 'return_flag',
     emergency_flag: 'emergency_flag', bus_stop_code: 'bus_stop_id', rider: 'rider',
     tariff_number: 'tariff_number', extended_fare: 'extended_fare', qr_data: 'qr_data',
     tap_id: 'tap_id', only_tap: 'only_tap', cico_mode: 'cico_mode', ci_tid: 'ci_tid',
@@ -92,7 +92,7 @@ const EMV_CI = {
 // Java's local declarations; everything not listed starts as null.
 const DEFAULTS = {
     station_type: '1', usage_amt: '0', remained_amt: '0', old_amt: '0', sam_seq_no: '1',
-    qtick_used: '000000', trip_no: '0', origin_sam_id: '0', total_stop_cnt: '0',
+    qtick_used: '000000', trip_no: '0', origin_sam_id: '0',
     trip_stop_cnt: '0', odometer: '0', stage: '1', rider: '', tariff_number: '',
     extended_fare: '0', stop_seq_no: 0, service_charge: 0,
 };
@@ -264,8 +264,7 @@ class DataTransaction {
             validator_id: this.validator_id, bus_id: this.bus_id, depot_code: this.depot_code,
             route_code: this.route_code, driver_code: this.driver_code,
             boarding_date_time: this.boarding_date_time, start_date_time: this.start_date_time,
-            // The station path reads half_progress_type into hpt; see STATION_CI.
-            half_progress_type: this.hpt, return_flag: this.return_flag,
+            half_progress_type: this.half_progress_type, return_flag: this.return_flag,
             emergency_flag: this.emergency_flag, alias_no: this.alias_no, card_no: this.card_no,
             trans_flag: this.trans_flag, data_save_flag: this.data_save_flag,
             station_type: this.station_type, customer_flag: this.customer_flag,
